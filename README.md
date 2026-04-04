@@ -228,7 +228,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npx -y codesight
+      - run: npm install -g codesight && codesight
       - uses: actions/upload-artifact@v4
         with:
           name: codesight
