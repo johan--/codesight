@@ -1,0 +1,54 @@
+{
+  "name": "codesight",
+  "version": "1.0.0",
+  "description": "See your codebase clearly. Universal AI context generator that maps routes, schema, components, dependencies, and more for Claude Code, Cursor, Copilot, Codex, and any AI coding tool.",
+  "main": "dist/index.js",
+  "bin": {
+    "codesight": "dist/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": [
+    "ai",
+    "cli",
+    "context",
+    "codebase",
+    "claude",
+    "cursor",
+    "copilot",
+    "codex",
+    "windsurf",
+    "cline",
+    "developer-tools",
+    "code-analysis",
+    "llm",
+    "anthropic",
+    "openai",
+    "mcp",
+    "context-engineering",
+    "token-savings",
+    "repo-map"
+  ],
+  "author": "Houseofmvps",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Houseofmvps/codesight"
+  },
+  "homepage": "https://github.com/Houseofmvps/codesight#readme",
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist"
+  ]
+}
