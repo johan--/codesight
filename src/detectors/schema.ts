@@ -304,7 +304,7 @@ async function detectSQLAlchemySchemas(
 
     // Match class definitions
     const classPattern =
-      /class\s+(\w+)\s*\([^)]*(?:Base|Model|DeclarativeBase)[^)]*\)\s*:([\s\S]*?)(?=\nclass\s|\n[^\s]|\Z)/g;
+      /class\s+(\w+)\s*\([^)]*(?:Base|Model|DeclarativeBase)[^)]*\)\s*:([\s\S]*?)(?=\nclass\s|\n[^\s]|$)/g;
     let match;
     while ((match = classPattern.exec(content)) !== null) {
       const name = match[1];

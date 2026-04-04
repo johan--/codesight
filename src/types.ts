@@ -138,12 +138,46 @@ export interface BlastRadiusResult {
 }
 
 export interface CodesightConfig {
+  /** Disable specific detectors: "routes", "schema", "components", "libs", "config", "middleware", "graph" */
   disableDetectors?: string[];
+  /** Custom route tags: { "billing": ["stripe", "payment"] } */
   customTags?: Record<string, string[]>;
+  /** Max directory depth (default: 10) */
   maxDepth?: number;
+  /** Output directory name (default: ".codesight") */
   outputDir?: string;
+  /** AI tool profile */
   profile?: "claude-code" | "cursor" | "codex" | "copilot" | "windsurf" | "generic";
+  /** Additional ignore patterns (glob-style) */
   ignorePatterns?: string[];
+  /** Custom route patterns: [{ pattern: "router\\.handle\\(", method: "ALL" }] */
+  customRoutePatterns?: { pattern: string; method?: string }[];
+  /** Blast radius max BFS depth (default: 5) */
+  blastRadiusDepth?: number;
+  /** Hot file threshold: min imports to be "hot" (default: 3) */
+  hotFileThreshold?: number;
+  /** Plugin hooks */
+  plugins?: CodesightPlugin[];
+}
+
+export interface CodesightPlugin {
+  /** Plugin name for identification */
+  name: string;
+  /** Custom detector: runs after built-in detectors */
+  detector?: (files: string[], project: ProjectInfo) => Promise<PluginDetectorResult>;
+  /** Post-processor: transforms the final ScanResult */
+  postProcessor?: (result: ScanResult) => Promise<ScanResult>;
+}
+
+export interface PluginDetectorResult {
+  /** Additional routes to merge */
+  routes?: RouteInfo[];
+  /** Additional schema models to merge */
+  schemas?: SchemaModel[];
+  /** Additional components to merge */
+  components?: ComponentInfo[];
+  /** Additional middleware to merge */
+  middleware?: MiddlewareInfo[];
 }
 
 export interface ScanResult {

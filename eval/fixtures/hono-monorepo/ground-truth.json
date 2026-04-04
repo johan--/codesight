@@ -1,0 +1,33 @@
+{
+  "routes": [
+    { "method": "GET", "path": "/health" },
+    { "method": "POST", "path": "/login" },
+    { "method": "POST", "path": "/register" },
+    { "method": "POST", "path": "/refresh" },
+    { "method": "GET", "path": "/" },
+    { "method": "GET", "path": "/:id" },
+    { "method": "PUT", "path": "/:id" },
+    { "method": "DELETE", "path": "/:id" },
+    { "method": "GET", "path": "/" },
+    { "method": "GET", "path": "/:id" },
+    { "method": "POST", "path": "/" }
+  ],
+  "models": [
+    {
+      "name": "users",
+      "fields": ["id", "email", "name", "role", "createdAt"],
+      "relations": ["projects"]
+    },
+    {
+      "name": "projects",
+      "fields": ["id", "name", "description", "ownerId", "isPublic", "createdAt"],
+      "relations": ["owner"]
+    }
+  ],
+  "components": [
+    { "name": "ProjectCard", "props": ["name", "description", "isPublic"] },
+    { "name": "UserAvatar", "props": ["name", "size"] }
+  ],
+  "envVars": ["DATABASE_URL", "JWT_SECRET", "PORT"],
+  "middleware": ["auth"]
+}

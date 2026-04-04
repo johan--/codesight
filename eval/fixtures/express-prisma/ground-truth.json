@@ -1,0 +1,31 @@
+{
+  "routes": [
+    { "method": "POST", "path": "/login" },
+    { "method": "POST", "path": "/register" },
+    { "method": "GET", "path": "/" },
+    { "method": "GET", "path": "/:id" },
+    { "method": "PUT", "path": "/:id" },
+    { "method": "DELETE", "path": "/:id" },
+    { "method": "POST", "path": "/" }
+  ],
+  "models": [
+    {
+      "name": "User",
+      "fields": ["id", "email", "password", "name", "role", "posts", "createdAt"]
+    },
+    {
+      "name": "Post",
+      "fields": ["id", "title", "content", "published", "author", "authorId", "tags", "createdAt"]
+    },
+    {
+      "name": "Tag",
+      "fields": ["id", "name", "posts"]
+    },
+    {
+      "name": "enum:Role",
+      "fields": ["USER", "ADMIN"]
+    }
+  ],
+  "envVars": ["DATABASE_URL", "JWT_SECRET", "PORT", "REDIS_URL", "CORS_ORIGIN"],
+  "middleware": ["auth", "error", "rate-limit", "cors"]
+}

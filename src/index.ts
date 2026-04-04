@@ -16,8 +16,10 @@ import { writeOutput } from "./formatter.js";
 import { generateAIConfigs } from "./generators/ai-config.js";
 import { generateHtmlReport } from "./generators/html-report.js";
 import type { ScanResult } from "./types.js";
+import type { CodesightConfig } from "./types.js";
+import { loadConfig, mergeCliConfig } from "./config.js";
 
-const VERSION = "1.3.2";
+const VERSION = "1.4.0";
 const BRAND = "codesight";
 
 function printHelp() {
@@ -39,8 +41,14 @@ function printHelp() {
     --benchmark          Show detailed token savings breakdown
     --profile <tool>     Generate optimized config (claude-code|cursor|codex|copilot|windsurf)
     --blast <file>       Show blast radius for a file
+    --telemetry          Run token telemetry (real before/after measurement)
+    --eval               Run precision/recall benchmarks on eval fixtures
     -v, --version        Show version
     -h, --help           Show this help
+
+  Config:
+    Reads codesight.config.(ts|js|json) or package.json "codesight" field.
+    See docs for disableDetectors, customRoutePatterns, plugins, and more.
 
   Examples:
     npx ${BRAND}                    # Scan current directory
@@ -49,6 +57,8 @@ function printHelp() {
     npx ${BRAND} --watch            # Watch mode, re-scan on changes
     npx ${BRAND} --mcp              # Start MCP server
     npx ${BRAND} --hook             # Install git pre-commit hook
+    npx ${BRAND} --telemetry        # Measure real token savings
+    npx ${BRAND} --eval             # Run accuracy benchmarks
     npx ${BRAND} ./my-project       # Scan specific directory
 `);
 }
@@ -62,7 +72,7 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
-async function scan(root: string, outputDirName: string, maxDepth: number): Promise<ScanResult> {
+async function scan(root: string, outputDirName: string, maxDepth: number, userConfig: CodesightConfig = {}): Promise<ScanResult> {
   const outputDir = join(root, outputDirName);
 
   console.log(`\n  ${BRAND} v${VERSION}`);
@@ -86,19 +96,38 @@ async function scan(root: string, outputDirName: string, maxDepth: number): Prom
   const files = await collectFiles(root, maxDepth);
   console.log(` ${files.length} files`);
 
-  // Step 3: Run all detectors in parallel
+  // Step 3: Run all detectors in parallel (respecting disableDetectors config)
   process.stdout.write("  Analyzing...");
 
-  const [rawRoutes, schemas, components, libs, config, middleware, graph] =
+  const disabled = new Set(userConfig.disableDetectors || []);
+
+  const [rawRoutes, schemas, components, libs, configResult, middleware, graph] =
     await Promise.all([
-      detectRoutes(files, project),
-      detectSchemas(files, project),
-      detectComponents(files, project),
-      detectLibs(files, project),
-      detectConfig(files, project),
-      detectMiddleware(files, project),
-      detectDependencyGraph(files, project),
+      disabled.has("routes") ? Promise.resolve([]) : detectRoutes(files, project),
+      disabled.has("schema") ? Promise.resolve([]) : detectSchemas(files, project),
+      disabled.has("components") ? Promise.resolve([]) : detectComponents(files, project),
+      disabled.has("libs") ? Promise.resolve([]) : detectLibs(files, project),
+      disabled.has("config") ? Promise.resolve({ envVars: [], configFiles: [], dependencies: {}, devDependencies: {} }) : detectConfig(files, project),
+      disabled.has("middleware") ? Promise.resolve([]) : detectMiddleware(files, project),
+      disabled.has("graph") ? Promise.resolve({ edges: [], hotFiles: [] }) : detectDependencyGraph(files, project),
     ]);
+
+  // Step 3b: Run plugin detectors
+  if (userConfig.plugins) {
+    for (const plugin of userConfig.plugins) {
+      if (plugin.detector) {
+        try {
+          const pluginResult = await plugin.detector(files, project);
+          if (pluginResult.routes) rawRoutes.push(...pluginResult.routes);
+          if (pluginResult.schemas) schemas.push(...pluginResult.schemas);
+          if (pluginResult.components) components.push(...pluginResult.components);
+          if (pluginResult.middleware) middleware.push(...pluginResult.middleware);
+        } catch (err: any) {
+          console.warn(`\n  Warning: plugin "${plugin.name}" failed: ${err.message}`);
+        }
+      }
+    }
+  }
 
   // Step 4: Enrich routes with contract info
   const routes = await enrichRouteContracts(rawRoutes, project);
@@ -124,7 +153,7 @@ async function scan(root: string, outputDirName: string, maxDepth: number): Prom
     schemas,
     components,
     libs,
-    config,
+    config: configResult,
     middleware,
     graph,
     tokenStats: { outputTokens: 0, estimatedExplorationTokens: 0, saved: 0, fileCount: files.length },
@@ -150,7 +179,7 @@ async function scan(root: string, outputDirName: string, maxDepth: number): Prom
     Models:       ${schemas.length}
     Components:   ${components.length}
     Libraries:    ${libs.length}
-    Env vars:     ${config.envVars.length}
+    Env vars:     ${configResult.envVars.length}
     Middleware:    ${middleware.length}
     Import links: ${graph.edges.length}
     Hot files:    ${graph.hotFiles.length}
@@ -271,6 +300,8 @@ async function main() {
   let doBenchmark = false;
   let doProfile = "";
   let doBlast = "";
+  let doTelemetry = false;
+  let doEval = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -299,6 +330,10 @@ async function main() {
       doProfile = args[++i];
     } else if (arg === "--blast" && args[i + 1]) {
       doBlast = args[++i];
+    } else if (arg === "--telemetry") {
+      doTelemetry = true;
+    } else if (arg === "--eval") {
+      doEval = true;
     } else if (!arg.startsWith("-")) {
       targetDir = resolve(arg);
     }
@@ -311,15 +346,62 @@ async function main() {
     return;
   }
 
+  // Eval mode (standalone, no scan needed)
+  if (doEval) {
+    const { runEval } = await import("./eval.js");
+    await runEval();
+    return;
+  }
+
   const root = resolve(targetDir);
+
+  // Load config file
+  const fileConfig = await loadConfig(root);
+  const config = mergeCliConfig(fileConfig, {
+    maxDepth: maxDepth !== 10 ? maxDepth : undefined,
+    outputDir: outputDirName !== ".codesight" ? outputDirName : undefined,
+    profile: doProfile || undefined,
+  });
+
+  // Apply config overrides
+  if (config.maxDepth) maxDepth = config.maxDepth;
+  if (config.outputDir) outputDirName = config.outputDir;
 
   // Install git hook
   if (doHook) {
     await installGitHook(root, outputDirName);
   }
 
-  // Run scan
-  const result = await scan(root, outputDirName, maxDepth);
+  // Run scan (passes config for disabled detectors + plugins)
+  let result = await scan(root, outputDirName, maxDepth, config);
+
+  // Run plugin post-processors
+  if (config.plugins) {
+    for (const plugin of config.plugins) {
+      if (plugin.postProcessor) {
+        try {
+          result = await plugin.postProcessor(result);
+        } catch (err: any) {
+          console.warn(`  Warning: plugin "${plugin.name}" post-processor failed: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  // Token telemetry
+  if (doTelemetry) {
+    const { runTelemetry } = await import("./telemetry.js");
+    const outputDir = join(root, outputDirName);
+    process.stdout.write("  Running telemetry...");
+    const report = await runTelemetry(root, result, outputDir);
+    console.log(` ${outputDirName}/telemetry.md`);
+    console.log(`\n  Telemetry Results:`);
+    for (const task of report.tasks) {
+      console.log(`    ${task.name}: ${task.reduction}x reduction (${task.tokensWithout.toLocaleString()} → ${task.tokensWith.toLocaleString()} tokens)`);
+    }
+    console.log(`    Average: ${report.summary.averageReduction}x | Tool calls saved: ${report.summary.totalToolCallsSaved}`);
+    console.log("");
+  }
 
   // JSON output
   if (jsonOutput) {
