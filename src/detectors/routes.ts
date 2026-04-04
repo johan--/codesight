@@ -2,6 +2,8 @@ import { relative, basename } from "node:path";
 import { readFileSafe } from "../scanner.js";
 import { loadTypeScript } from "../ast/loader.js";
 import { extractRoutesAST } from "../ast/extract-routes.js";
+import { extractPythonRoutesAST } from "../ast/extract-python.js";
+import { extractGoRoutesStructured } from "../ast/extract-go.js";
 import type { RouteInfo, Framework, ProjectInfo } from "../types.js";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"];
@@ -719,6 +721,16 @@ async function detectFastAPIRoutes(
     if (!content.includes("fastapi") && !content.includes("FastAPI") && !content.includes("APIRouter")) continue;
 
     const rel = relative(project.root, file);
+    const tags = detectTags(content);
+
+    // Try Python AST first
+    const astRoutes = await extractPythonRoutesAST(rel, content, "fastapi", tags);
+    if (astRoutes && astRoutes.length > 0) {
+      routes.push(...astRoutes);
+      continue;
+    }
+
+    // Fallback to regex
     const routePattern =
       /@\w+\s*\.\s*(get|post|put|patch|delete|options)\s*\(\s*['"]([^'"]+)['"]/gi;
     let match;
@@ -727,7 +739,7 @@ async function detectFastAPIRoutes(
         method: match[1].toUpperCase(),
         path: match[2],
         file: rel,
-        tags: detectTags(content),
+        tags,
         framework: "fastapi",
       });
     }
@@ -749,6 +761,16 @@ async function detectFlaskRoutes(
     if (!content.includes("flask") && !content.includes("Flask") && !content.includes("Blueprint")) continue;
 
     const rel = relative(project.root, file);
+    const tags = detectTags(content);
+
+    // Try Python AST first
+    const astRoutes = await extractPythonRoutesAST(rel, content, "flask", tags);
+    if (astRoutes && astRoutes.length > 0) {
+      routes.push(...astRoutes);
+      continue;
+    }
+
+    // Fallback to regex
     const routePattern =
       /@(?:app|bp|blueprint|\w+)\s*\.\s*route\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*methods\s*=\s*\[([^\]]+)\])?\s*\)/gi;
     let match;
@@ -763,7 +785,7 @@ async function detectFlaskRoutes(
           method,
           path,
           file: rel,
-          tags: detectTags(content),
+          tags,
           framework: "flask",
         });
       }
@@ -786,8 +808,16 @@ async function detectDjangoRoutes(
   for (const file of pyFiles) {
     const content = await readFileSafe(file);
     const rel = relative(project.root, file);
+    const tags = detectTags(content);
 
-    // path("api/v1/users/", views.UserView.as_view())
+    // Try Python AST first
+    const astRoutes = await extractPythonRoutesAST(rel, content, "django", tags);
+    if (astRoutes && astRoutes.length > 0) {
+      routes.push(...astRoutes);
+      continue;
+    }
+
+    // Fallback to regex
     const pathPattern = /path\s*\(\s*['"]([^'"]*)['"]\s*,/g;
     let match;
     while ((match = pathPattern.exec(content)) !== null) {
@@ -795,7 +825,7 @@ async function detectDjangoRoutes(
         method: "ALL",
         path: "/" + match[1],
         file: rel,
-        tags: detectTags(content),
+        tags,
         framework: "django",
       });
     }
@@ -816,69 +846,40 @@ async function detectGoRoutes(
   for (const file of goFiles) {
     const content = await readFileSafe(file);
     const rel = relative(project.root, file);
+    const tags = detectTags(content);
 
-    if (fw === "gin") {
+    // Use structured parser (brace-tracking + group prefix resolution)
+    const structuredRoutes = extractGoRoutesStructured(rel, content, fw, tags);
+    if (structuredRoutes.length > 0) {
+      routes.push(...structuredRoutes);
+      continue;
+    }
+
+    // Fallback to simple regex for files where structured parser found nothing
+    if (fw === "gin" || fw === "echo") {
       const pattern = /\.\s*(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s*\(\s*["']([^"']+)["']/g;
       let match;
       while ((match = pattern.exec(content)) !== null) {
-        routes.push({
-          method: match[1],
-          path: match[2],
-          file: rel,
-          tags: detectTags(content),
-          framework: fw,
-        });
+        routes.push({ method: match[1], path: match[2], file: rel, tags, framework: fw });
       }
-    } else if (fw === "fiber") {
+    } else if (fw === "fiber" || fw === "chi") {
       const pattern = /\.\s*(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*["']([^"']+)["']/g;
       let match;
       while ((match = pattern.exec(content)) !== null) {
-        routes.push({
-          method: match[1].toUpperCase(),
-          path: match[2],
-          file: rel,
-          tags: detectTags(content),
-          framework: fw,
-        });
-      }
-    } else if (fw === "echo") {
-      // e.GET("/path", handler) or g.POST("/path", handler)
-      const pattern = /\.\s*(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s*\(\s*["']([^"']+)["']/g;
-      let match;
-      while ((match = pattern.exec(content)) !== null) {
-        routes.push({
-          method: match[1],
-          path: match[2],
-          file: rel,
-          tags: detectTags(content),
-          framework: fw,
-        });
-      }
-    } else if (fw === "chi") {
-      // r.Get("/path", handler), r.Post("/path", handler)
-      const pattern = /\.\s*(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*["']([^"']+)["']/g;
-      let match;
-      while ((match = pattern.exec(content)) !== null) {
-        routes.push({
-          method: match[1].toUpperCase(),
-          path: match[2],
-          file: rel,
-          tags: detectTags(content),
-          framework: fw,
-        });
+        routes.push({ method: match[1].toUpperCase(), path: match[2], file: rel, tags, framework: fw });
       }
     } else {
-      // net/http: http.HandleFunc("/path", handler) or mux.HandleFunc("/path", handler)
+      // net/http
       const pattern = /(?:HandleFunc|Handle)\s*\(\s*["']([^"']+)["']/g;
       let match;
       while ((match = pattern.exec(content)) !== null) {
-        routes.push({
-          method: "ALL",
-          path: match[1],
-          file: rel,
-          tags: detectTags(content),
-          framework: fw,
-        });
+        // Go 1.22+: "GET /path" patterns
+        const pathStr = match[1];
+        let method = "ALL";
+        let path = pathStr;
+        const methodMatch = pathStr.match(/^(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+(\/.*)/);
+        if (methodMatch) { method = methodMatch[1]; path = methodMatch[2]; }
+        routes.push({ method, path, file: rel, tags, framework: fw });
       }
     }
   }

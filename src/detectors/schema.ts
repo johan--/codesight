@@ -1,7 +1,9 @@
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { readFileSafe } from "../scanner.js";
 import { loadTypeScript } from "../ast/loader.js";
 import { extractDrizzleSchemaAST, extractTypeORMSchemaAST } from "../ast/extract-schema.js";
+import { extractSQLAlchemyAST } from "../ast/extract-python.js";
+import { extractGORMModelsStructured } from "../ast/extract-go.js";
 import type { SchemaModel, SchemaField, ProjectInfo } from "../types.js";
 
 const AUDIT_FIELDS = new Set([
@@ -32,6 +34,9 @@ export async function detectSchemas(
         break;
       case "sqlalchemy":
         models.push(...(await detectSQLAlchemySchemas(files, project)));
+        break;
+      case "gorm":
+        models.push(...(await detectGORMSchemas(files, project)));
         break;
     }
   }
@@ -302,7 +307,16 @@ async function detectSQLAlchemySchemas(
     if (!content.includes("Column") && !content.includes("mapped_column")) continue;
     if (!content.includes("Base") && !content.includes("DeclarativeBase") && !content.includes("Model")) continue;
 
-    // Match class definitions
+    const rel = relative(project.root, file);
+
+    // Try Python AST first
+    const astModels = await extractSQLAlchemyAST(rel, content);
+    if (astModels && astModels.length > 0) {
+      models.push(...astModels);
+      continue;
+    }
+
+    // Fallback to regex
     const classPattern =
       /class\s+(\w+)\s*\([^)]*(?:Base|Model|DeclarativeBase)[^)]*\)\s*:([\s\S]*?)(?=\nclass\s|\n[^\s]|$)/g;
     let match;
@@ -346,6 +360,26 @@ async function detectSQLAlchemySchemas(
         models.push({ name, fields, relations, orm: "sqlalchemy" });
       }
     }
+  }
+
+  return models;
+}
+
+// --- GORM ---
+async function detectGORMSchemas(
+  files: string[],
+  _project: ProjectInfo
+): Promise<SchemaModel[]> {
+  const goFiles = files.filter((f) => f.endsWith(".go"));
+  const models: SchemaModel[] = [];
+
+  for (const file of goFiles) {
+    const content = await readFileSafe(file);
+    if (!content.includes("gorm") && !content.includes("Model") && !content.includes("`json:")) continue;
+
+    const rel = relative(_project.root, file);
+    const structModels = extractGORMModelsStructured(rel, content);
+    models.push(...structModels);
   }
 
   return models;

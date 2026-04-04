@@ -227,9 +227,9 @@ async function detectFrameworks(
 
   // Go frameworks - check go.mod
   const goDeps = await getGoDeps(root);
-  if (goDeps.includes("net/http")) frameworks.push("go-net-http");
-  if (goDeps.includes("gin-gonic/gin")) frameworks.push("gin");
-  if (goDeps.includes("gofiber/fiber")) frameworks.push("fiber");
+  if (goDeps.some((d) => d.includes("net/http"))) frameworks.push("go-net-http");
+  if (goDeps.some((d) => d.includes("gin-gonic/gin"))) frameworks.push("gin");
+  if (goDeps.some((d) => d.includes("gofiber/fiber"))) frameworks.push("fiber");
   if (goDeps.some((d) => d.includes("labstack/echo"))) frameworks.push("echo");
   if (goDeps.some((d) => d.includes("go-chi/chi"))) frameworks.push("chi");
 

@@ -1,0 +1,25 @@
+{
+  "routes": [
+    { "method": "GET", "path": "/health" },
+    { "method": "GET", "path": "/api/users" },
+    { "method": "GET", "path": "/api/users/:id" },
+    { "method": "POST", "path": "/api/users" },
+    { "method": "PUT", "path": "/api/users/:id" },
+    { "method": "DELETE", "path": "/api/users/:id" },
+    { "method": "GET", "path": "/api/projects" },
+    { "method": "GET", "path": "/api/projects/:id" },
+    { "method": "POST", "path": "/api/projects" }
+  ],
+  "models": [
+    {
+      "name": "User",
+      "fields": ["ID", "CreatedAt", "UpdatedAt", "DeletedAt", "Email", "Password", "Name", "Role"]
+    },
+    {
+      "name": "Project",
+      "fields": ["ID", "CreatedAt", "UpdatedAt", "DeletedAt", "Name", "Description", "IsPublic", "OwnerID"]
+    }
+  ],
+  "envVars": ["DATABASE_URL", "JWT_SECRET", "PORT", "GIN_MODE"],
+  "middleware": ["auth"]
+}
