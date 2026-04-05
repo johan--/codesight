@@ -55,30 +55,13 @@ Every number below comes from running `codesight v1.3.1` on real production code
 
 | Project | Stack | Files | Routes | Models | Components | Output Tokens | Exploration Tokens | Savings | Scan Time |
 |---|---|---|---|---|---|---|---|---|---|
-| **SaveMRR** | Hono + Drizzle, 4 workspaces | 92 | 60 | 18 | 16 | 5,129 | 66,040 | **12.9x** | 290ms |
-| **BuildRadar** | raw HTTP + Drizzle | 53 | 38 | 12 | 0 | 3,945 | 46,020 | **11.7x** | 185ms |
-| **RankRev** | Hono + Drizzle, 3 workspaces | 40 | 13 | 8 | 10 | 2,865 | 26,130 | **9.1x** | 260ms |
+| **SaaS A** | Hono + Drizzle, 4 workspaces | 92 | 60 | 18 | 16 | 5,129 | 66,040 | **12.9x** | 290ms |
+| **SaaS B** | raw HTTP + Drizzle | 53 | 38 | 12 | 0 | 3,945 | 46,020 | **11.7x** | 185ms |
+| **SaaS C** | Hono + Drizzle, 3 workspaces | 40 | 13 | 8 | 10 | 2,865 | 26,130 | **9.1x** | 260ms |
 
 **Average: 11.2x token reduction.** Your AI reads ~3K-5K tokens instead of burning ~26K-66K exploring files.
 
-```mermaid
-flowchart LR
-    subgraph Without["Without codesight"]
-        direction TB
-        W1["Read files"] --> W2["Grep for patterns"]
-        W2 --> W3["Open configs"]
-        W3 --> W4["Explore dependencies"]
-        W4 --> W5["46,000-66,000 tokens"]
-    end
-    
-    subgraph With["With codesight"]
-        direction TB
-        C1["Read CODESIGHT.md"] --> C2["3,000-5,000 tokens"]
-    end
-    
-    style W5 fill:#ef4444,stroke:#dc2626,color:#fff
-    style C2 fill:#10b981,stroke:#059669,color:#000
-```
+![Token comparison: Without codesight (46K-66K tokens) vs With codesight (3K-5K tokens)](assets/token-comparison.jpg)
 
 ### AST Accuracy
 
@@ -86,17 +69,17 @@ When TypeScript is available, codesight uses the TypeScript compiler API for str
 
 | Project | AST Routes | AST Models | AST Components | False Positives |
 |---|---|---|---|---|
-| **SaveMRR** | 60/60 (100%) | 18/18 (100%) | 16/16 (100%) | 0 |
-| **BuildRadar** | 0/38 (regex fallback) | 12/12 (100%) | n/a | 0 |
-| **RankRev** | 13/13 (100%) | 8/8 (100%) | 10/10 (100%) | 0 |
+| **SaaS A** | 60/60 (100%) | 18/18 (100%) | 16/16 (100%) | 0 |
+| **SaaS B** | 0/38 (regex fallback) | 12/12 (100%) | n/a | 0 |
+| **SaaS C** | 13/13 (100%) | 8/8 (100%) | 10/10 (100%) | 0 |
 
-BuildRadar uses raw `http.createServer` which has no framework structure for AST to parse. codesight correctly falls back to regex for routes while still using AST for Drizzle schema. Zero false positives across all three projects.
+SaaS B uses raw `http.createServer` which has no framework structure for AST to parse. codesight correctly falls back to regex for routes while still using AST for Drizzle schema. Zero false positives across all three projects.
 
 ### Blast Radius Accuracy
 
-Tested on BuildRadar: changing `src/db/index.ts` (the database module) correctly identified:
+Tested on a production SaaS: changing the database module correctly identified:
 
-- **10 affected files** (dashboard, webhooks, auth, scanner, cron, daily digest, server, CLI, index)
+- **10 affected files** across API, auth, background jobs, and server layers
 - **33 affected routes** (every endpoint that touches the database)
 - **12 affected models** (all schema models)
 - **BFS depth:** 3 hops through the import graph
@@ -105,7 +88,7 @@ Tested on BuildRadar: changing `src/db/index.ts` (the database module) correctly
 
 Measured across the three benchmark projects:
 
-| Detector | SaveMRR (92 files) | BuildRadar (53 files) | RankRev (40 files) |
+| Detector | SaaS A (92 files) | SaaS B (53 files) | SaaS C (40 files) |
 |---|---|---|---|
 | **Routes** | 60 | 38 | 13 |
 | **Schema models** | 18 | 12 | 8 |
@@ -120,41 +103,9 @@ Measured across the three benchmark projects:
 
 ## How It Works
 
-```mermaid
-flowchart LR
-    A["Your Codebase"] --> B["codesight"]
-    B --> C["AST Parser"]
-    B --> D["Regex Fallback"]
-    C --> E["Structured Context Map"]
-    D --> E
-    E --> F["CLAUDE.md"]
-    E --> G[".cursorrules"]
-    E --> H["codex.md"]
-    E --> I["MCP Server"]
-    
-    style B fill:#f59e0b,stroke:#d97706,color:#000
-    style C fill:#10b981,stroke:#059669,color:#000
-    style E fill:#3b82f6,stroke:#2563eb,color:#fff
-```
+![How codesight works: Codebase → AST Parser + Regex Fallback → Context Map → CLAUDE.md, .cursorrules, codex.md, MCP Server](assets/how-it-works.jpg)
 
-```mermaid
-flowchart TD
-    subgraph Detectors["8 Parallel Detectors"]
-        R["Routes<br/>25+ frameworks"]
-        S["Schema<br/>8 ORMs"]
-        CP["Components<br/>React/Vue/Svelte"]
-        G["Dep Graph<br/>Import analysis"]
-        M["Middleware<br/>Auth/CORS/etc"]
-        CF["Config<br/>Env vars"]
-        L["Libraries<br/>Exports + sigs"]
-        CT["Contracts<br/>Params + types"]
-    end
-    
-    A["File Scanner"] --> Detectors
-    Detectors --> O["~3K-5K tokens output"]
-    
-    style O fill:#10b981,stroke:#059669,color:#000
-```
+![8 parallel detectors: Routes, Schema, Components, Dep Graph, Middleware, Config, Libraries, Contracts](assets/detectors.jpg)
 
 codesight runs all 8 detectors in parallel, then writes the results as structured markdown. The output is designed to be read by an AI in a single file load.
 
@@ -177,20 +128,7 @@ codesight runs all 8 detectors in parallel, then writes the results as structure
 
 When TypeScript is installed in the project being scanned, codesight uses the actual TypeScript compiler API to parse your code structurally. No regex guessing.
 
-```mermaid
-flowchart TD
-    F["Source File"] --> Check{"TypeScript<br/>in node_modules?"}
-    Check -->|Yes| AST["AST Parse<br/>(TypeScript Compiler API)"]
-    Check -->|No| Regex["Regex Parse<br/>(Pattern Matching)"]
-    AST --> Result["Routes / Schema / Components<br/>confidence: ast"]
-    AST -->|"Parse failed"| Regex
-    Regex --> Result2["Routes / Schema / Components<br/>confidence: regex"]
-    
-    style AST fill:#10b981,stroke:#059669,color:#000
-    style Regex fill:#f59e0b,stroke:#d97706,color:#000
-    style Result fill:#3b82f6,stroke:#2563eb,color:#fff
-    style Result2 fill:#3b82f6,stroke:#2563eb,color:#fff
-```
+![AST precision: TypeScript available → AST Parse, otherwise Regex fallback](assets/ast-precision.jpg)
 
 | What AST enables | Regex alone |
 |---|---|
@@ -216,116 +154,57 @@ No configuration needed. If TypeScript is in your `node_modules`, AST kicks in a
 
 Not just paths. Methods, URL parameters, what each route touches (auth, database, cache, payments, AI, email, queues), and where the handler lives. Detects routes across 25+ frameworks automatically.
 
-Actual output from BuildRadar:
+Example output:
 
 ```markdown
-- `GET` `/dashboard/me` [auth, db, cache, payment, ai]
-- `PUT` `/dashboard/me` [auth, db, cache, payment, ai]
-- `DELETE` `/dashboard/me` [auth, db, cache, payment, ai]
-- `POST` `/dashboard/generate-reply` [auth, db, cache, payment, ai]
-- `POST` `/webhooks/polar` [db, payment]
-- `GET` `/health` [auth, db, cache, payment, ai]
-```
-
-Actual output from RankRev:
-
-```markdown
-- `GET` `/:siteId` params(siteId) [auth, db]
-- `GET` `/:siteId/actions` params(siteId) [auth, db]
-- `PATCH` `/:siteId/:winId` params(siteId, winId) [auth, db]
-- `GET` `/discover` params() [auth, db, payment]
+- `GET` `/api/users/me` [auth, db, cache]
+- `PUT` `/api/users/me` [auth, db]
+- `POST` `/api/projects` [auth, db, payment]
+- `GET` `/api/projects/:id` params(id) [auth, db]
+- `POST` `/webhooks/stripe` [db, payment]
+- `GET` `/health`
 ```
 
 ## Schema
 
 Models, fields, types, primary keys, foreign keys, unique constraints, relations. Parsed directly from your ORM definitions via AST. No need to open migration files.
 
-Actual output from BuildRadar (12 models, all AST-parsed):
+Example output:
 
 ```markdown
 ### user
 - id: text (pk)
 - name: text (required)
 - email: text (unique, required)
-- emailVerified: boolean (default, required)
-- tier: text (default, required)
-- polarCustomerId: text (fk)
+- role: text (default, required)
+- stripeCustomerId: text (fk)
 
-### monitor
-- id: text (default, pk)
-- userId: text (fk, required)
+### project
+- id: uuid (default, pk)
+- ownerId: text (fk, required)
 - name: text (required)
-- subreddits: jsonb (required)
-- keywords: jsonb (required)
-- _relations_: userId -> user.id
-```
-
-Actual output from RankRev (8 models, all AST-parsed):
-
-```markdown
-### sites
-- id: uuid (pk)
-- userId: uuid (fk, required)
-- gscSiteUrl: text (required)
-- ga4PropertyId: text (required, fk)
-- lastSyncAt: timestamp
-- _relations_: userId -> users.id
+- settings: jsonb (required)
+- _relations_: ownerId -> user.id
 ```
 
 ## Dependency Graph
 
 The files imported the most are the ones that break the most things when changed. codesight finds them and tells your AI to be careful.
 
-Actual output from BuildRadar (101 import links):
+Example output:
 
 ```markdown
 ## Most Imported Files (change these carefully)
 - `src/types/index.ts` — imported by **20** files
-- `src/core/composio-auth.ts` — imported by **6** files
-- `src/db/index.ts` — imported by **5** files
-- `src/intelligence/patterns.ts` — imported by **5** files
-- `src/core/cache.ts` — imported by **5** files
-```
-
-Actual output from RankRev (76 import links):
-
-```markdown
-## Most Imported Files (change these carefully)
-- `apps/api/src/db/schema.ts` — imported by **10** files
-- `apps/api/src/db/index.ts` — imported by **10** files
-- `apps/api/src/lib/auth.ts` — imported by **7** files
-- `apps/api/src/lib/env.ts` — imported by **6** files
+- `src/db/index.ts` — imported by **12** files
+- `src/lib/auth.ts` — imported by **8** files
+- `src/lib/cache.ts` — imported by **6** files
+- `src/lib/env.ts` — imported by **5** files
 ```
 
 ## Blast Radius
 
-```mermaid
-graph TD
-    DB["src/db/index.ts<br/>(you change this)"] --> D1["src/api/dashboard.ts"]
-    DB --> D2["src/api/webhooks.ts"]
-    DB --> D3["src/auth/session.ts"]
-    DB --> D4["src/monitor/scanner.ts"]
-    DB --> D5["src/monitor/daily-digest.ts"]
-    D1 --> D6["src/server.ts"]
-    D3 --> D7["src/auth/index.ts"]
-    D4 --> D8["src/monitor/cron.ts"]
-    D6 --> D9["src/index.ts"]
-    D6 --> D10["src/cli.ts"]
-    
-    style DB fill:#ef4444,stroke:#dc2626,color:#fff
-    style D1 fill:#f59e0b,stroke:#d97706,color:#000
-    style D2 fill:#f59e0b,stroke:#d97706,color:#000
-    style D3 fill:#f59e0b,stroke:#d97706,color:#000
-    style D4 fill:#f59e0b,stroke:#d97706,color:#000
-    style D5 fill:#f59e0b,stroke:#d97706,color:#000
-    style D6 fill:#fbbf24,stroke:#f59e0b,color:#000
-    style D7 fill:#fbbf24,stroke:#f59e0b,color:#000
-    style D8 fill:#fbbf24,stroke:#f59e0b,color:#000
-    style D9 fill:#fde68a,stroke:#fbbf24,color:#000
-    style D10 fill:#fde68a,stroke:#fbbf24,color:#000
-```
-
-*Actual blast radius from BuildRadar: changing `src/db/index.ts` affects 10 files, 33 routes, and all 12 models.*
+![Blast radius: changing src/db/index.ts ripples through 10 files across 3 hops](assets/blast-radius.jpg)
 
 BFS through the import graph finds all transitively affected files, routes, models, and middleware.
 
@@ -333,54 +212,32 @@ BFS through the import graph finds all transitively affected files, routes, mode
 npx codesight --blast src/db/index.ts
 ```
 
-Actual output from BuildRadar:
+Example output:
 
 ```
   Blast Radius: src/db/index.ts
   Depth: 3 hops
 
   Affected files (10):
-    src/api/dashboard.ts
+    src/api/users.ts
+    src/api/projects.ts
     src/api/webhooks.ts
     src/auth/session.ts
-    src/monitor/daily-digest.ts
-    src/monitor/scanner.ts
+    src/jobs/notifications.ts
     src/server.ts
     src/auth/index.ts
-    src/monitor/cron.ts
+    src/jobs/cron.ts
     src/cli.ts
     src/index.ts
 
   Affected routes (33):
-    GET /dashboard/composio/login — src/api/dashboard.ts
-    GET /dashboard/me — src/api/dashboard.ts
-    PUT /dashboard/me — src/api/dashboard.ts
+    GET /api/users/me — src/api/users.ts
+    POST /api/projects — src/api/projects.ts
+    POST /webhooks/stripe — src/api/webhooks.ts
     ...
 
-  Affected models: user, session, account, reddit_credentials,
-    reddit_oauth_connection, monitor, scan_result, lead,
-    lead_dossier, conversion_event, generated_reply, market_snapshot
-```
-
-Actual output from RankRev (changing `apps/api/src/db/schema.ts`):
-
-```
-  Blast Radius: apps/api/src/db/schema.ts
-  Depth: 3 hops
-
-  Affected files (16):
-    apps/api/src/db/index.ts
-    apps/api/src/routes/ai-citability.ts
-    apps/api/src/routes/auth.ts
-    apps/api/src/routes/money-pages.ts
-    apps/api/src/services/gsc-fetcher.ts
-    apps/api/src/services/money-pages-engine.ts
-    ...
-
-  Affected routes (17):
-    GET / — apps/api/src/index.ts
-    GET /:siteId — apps/api/src/routes/ai-citability.ts
-    ...
+  Affected models: user, session, account, project,
+    subscription, notification, audit_log
 ```
 
 Your AI can also query blast radius through the MCP server before making changes.
@@ -389,16 +246,15 @@ Your AI can also query blast radius through the MCP server before making changes
 
 Every env var across your codebase, flagged as required or has default, with the exact file where it is referenced.
 
-Actual output from BuildRadar (26 env vars):
+Example output:
 
 ```markdown
-- `ANTHROPIC_API_KEY` **required** — .env.example
-- `DATABASE_URL` (has default) — .env.example
-- `FRONTEND_URL` **required** — src/api/dashboard.ts
-- `POLAR_ACCESS_TOKEN` **required** — .env.example
-- `POLAR_WEBHOOK_SECRET` **required** — .env.example
-- `REDDIT_OAUTH_CLIENT_ID` **required** — src/api/reddit-oauth.ts
+- `DATABASE_URL` **required** — .env.example
+- `REDIS_URL` (has default) — .env.example
+- `STRIPE_SECRET_KEY` **required** — src/lib/payments.ts
+- `STRIPE_WEBHOOK_SECRET` **required** — .env.example
 - `RESEND_API_KEY` **required** — .env.example
+- `JWT_SECRET` **required** — src/lib/auth.ts
 ```
 
 ## Token Benchmark
@@ -409,7 +265,7 @@ See exactly where your token savings come from:
 npx codesight --benchmark
 ```
 
-Actual output from SaveMRR (92 files, 4-workspace monorepo):
+Example output (92-file monorepo):
 
 ```
   Token Savings Breakdown:
@@ -497,20 +353,7 @@ Runs as a Model Context Protocol server. Claude Code and Cursor call it directly
 }
 ```
 
-```mermaid
-flowchart LR
-    AI["Claude Code<br/>or Cursor"] <-->|"JSON-RPC 2.0<br/>over stdio"| MCP["codesight<br/>MCP Server"]
-    MCP --> Cache["Session Cache<br/>(scan once)"]
-    MCP --> T1["get_summary"]
-    MCP --> T2["get_routes"]
-    MCP --> T3["get_schema"]
-    MCP --> T4["get_blast_radius"]
-    MCP --> T5["get_env"]
-    MCP --> T6["get_hot_files"]
-    
-    style MCP fill:#f59e0b,stroke:#d97706,color:#000
-    style Cache fill:#10b981,stroke:#059669,color:#000
-```
+![MCP Server: Claude Code/Cursor ↔ codesight MCP Server → 6 specialized tools + session cache](assets/mcp-server.jpg)
 
 | Tool | What it does |
 |---|---|
