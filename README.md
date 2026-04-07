@@ -104,13 +104,13 @@ Every number below comes from running `codesight v1.6.0` on real production code
 
 | Project | Stack | Files | Routes | Models | Components | Output Tokens | Exploration Tokens | Savings | Scan Time |
 |---|---|---|---|---|---|---|---|---|---|
-| **BuildRadar** | raw-http + Drizzle | 53 | 38 | 12 | 0 | 3,945 | 46,020 | **11.7x** | 184ms |
-| **RankRev** | Hono + Drizzle, 3 workspaces | 40 | 13 | 8 | 10 | 2,865 | 26,130 | **9.1x** | 203ms |
-| **AICareerPath** | FastAPI (Python) | 138 | 56 | 0 | 0 | 3,129 | 47,450 | **15.2x** | 893ms |
+| **SaaS A** | raw-http + Drizzle | 53 | 38 | 12 | 0 | 3,945 | 46,020 | **11.7x** | 184ms |
+| **SaaS B** | Hono + Drizzle, 3 workspaces | 40 | 13 | 8 | 10 | 2,865 | 26,130 | **9.1x** | 203ms |
+| **SaaS C** | FastAPI (Python) | 138 | 56 | 0 | 0 | 3,129 | 47,450 | **15.2x** | 893ms |
 
 **Average: 12.0x token reduction.** Your AI reads ~3K-5K tokens instead of burning ~26K-47K exploring files.
 
-AICareerPath has 0 models because it uses Pydantic validators (request/response schemas), not a SQL ORM. This is correct detection, not a false negative.
+SaaS C has 0 models because it uses Pydantic validators (request/response schemas), not a SQL ORM. This is correct detection, not a false negative.
 
 ![Token comparison: Without codesight (46K-66K tokens) vs With codesight (3K-5K tokens)](assets/token-comparison.jpg)
 
@@ -120,9 +120,9 @@ With `--wiki`, targeted questions cost far fewer tokens than loading the full co
 
 | Project | Full CODESIGHT.md | Wiki Index (session start) | Targeted article | Wiki articles |
 |---|---|---|---|---|
-| **BuildRadar** | 3,945 tokens | ~200 tokens | ~350 tokens | 9 articles |
-| **RankRev** | 2,865 tokens | ~200 tokens | ~240 tokens | 11 articles |
-| **AICareerPath** | 3,129 tokens | ~200 tokens | ~160 tokens | 17 articles |
+| **SaaS A** | 3,945 tokens | ~200 tokens | ~350 tokens | 9 articles |
+| **SaaS B** | 2,865 tokens | ~200 tokens | ~240 tokens | 11 articles |
+| **SaaS C** | 3,129 tokens | ~200 tokens | ~160 tokens | 17 articles |
 
 "How does auth work?" goes from loading 3,945 tokens to reading `auth.md` (~350 tokens) — a **11x improvement on targeted queries**.
 
@@ -132,15 +132,15 @@ Verified against actual source files. Route counts cross-checked against route d
 
 | Project | Route Recall | Schema Recall | False Positives | Detection Method |
 |---|---|---|---|---|
-| **BuildRadar** | 38/38 (100%) | 12/12 (100%) | 0 | Schema: AST (Drizzle), Routes: regex (raw-http) |
-| **RankRev** | 13/13 (100%) | 8/8 (100%) | 0 | Full AST (Hono + Drizzle + React) |
-| **AICareerPath** | 56/57 (98.2%) | 0/0 (correct) | 0 | AST (FastAPI) |
+| **SaaS A** | 38/38 (100%) | 12/12 (100%) | 0 | Schema: AST (Drizzle), Routes: regex (raw-http) |
+| **SaaS B** | 13/13 (100%) | 8/8 (100%) | 0 | Full AST (Hono + Drizzle + React) |
+| **SaaS C** | 56/57 (98.2%) | 0/0 (correct) | 0 | AST (FastAPI) |
 
-BuildRadar uses raw `http.createServer` — codesight correctly falls back to URL pattern matching for routes while still using the TypeScript compiler API for Drizzle schema. AICareerPath missed 1 of 57 FastAPI routes (98.2% recall). Zero false positives across all three projects.
+SaaS A uses raw `http.createServer` — codesight correctly falls back to URL pattern matching for routes while still using the TypeScript compiler API for Drizzle schema. SaaS C missed 1 of 57 FastAPI routes (98.2% recall). Zero false positives across all three projects.
 
 ### Blast Radius Accuracy
 
-Tested on BuildRadar: changing `src/db/index.ts` correctly identified:
+Tested on a production SaaS: changing the database module correctly identified:
 
 - **5 affected files** across API, auth, and server layers
 - **All routes** that touch the database
