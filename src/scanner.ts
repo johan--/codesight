@@ -60,6 +60,7 @@ const CODE_EXTENSIONS = new Set([
   ".gql",
   ".proto",
   ".sql",
+  ".md",
 ]);
 
 /**

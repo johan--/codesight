@@ -16,7 +16,8 @@ import { detectGraphQLRoutes, detectGRPCRoutes, detectWebSocketRoutes } from "./
 import { detectEvents } from "./detectors/events.js";
 import { detectTestCoverage } from "./detectors/coverage.js";
 import { detectOpenAPISpec } from "./detectors/openapi.js";
-import { writeOutput, computeCrudGroups } from "./formatter.js";
+import { writeOutput, computeCrudGroups, writeKnowledgeOutput } from "./formatter.js";
+import { detectKnowledge } from "./detectors/knowledge.js";
 import { generateAIConfigs } from "./generators/ai-config.js";
 import { generateHtmlReport } from "./generators/html-report.js";
 import { generateWiki } from "./generators/wiki.js";
@@ -24,7 +25,7 @@ import type { ScanResult } from "./types.js";
 import type { CodesightConfig } from "./types.js";
 import { loadConfig, mergeCliConfig } from "./config.js";
 
-const VERSION = "1.9.2";
+const VERSION = "1.9.3";
 const BRAND = "codesight";
 
 function printHelp() {
@@ -51,6 +52,7 @@ function printHelp() {
     --eval                   Run precision/recall benchmarks on eval fixtures
     --max-tokens <n>         Trim output to fit token budget (e.g. --max-tokens 50000)
     --since <ref>            Show only routes from files changed since git ref/commit
+    --mode <mode>            Scan mode: code (default) | knowledge (map .md notes)
     -v, --version            Show version
     -h, --help               Show this help
 
@@ -73,6 +75,8 @@ function printHelp() {
     npx ${BRAND} --telemetry             # Measure real token savings
     npx ${BRAND} --eval                  # Run accuracy benchmarks
     npx ${BRAND} ./my-project            # Scan specific directory
+    npx ${BRAND} --mode knowledge        # Map knowledge base (.md notes → KNOWLEDGE.md)
+    npx ${BRAND} --mode knowledge ~/vault # Map Obsidian vault or any .md folder
 `);
 }
 
@@ -360,6 +364,53 @@ async function watchMode(root: string, outputDirName: string, maxDepth: number, 
   await new Promise(() => {});
 }
 
+async function runKnowledgeScan(root: string, outputDirName: string, maxDepth: number) {
+  const outputDir = join(root, outputDirName);
+  const projectName = root.split("/").pop() || "Project";
+
+  console.log(`\n  ${BRAND} v${VERSION}`);
+  console.log(`  Knowledge scan: ${root}\n`);
+
+  const startTime = Date.now();
+
+  process.stdout.write("  Collecting notes...");
+  const files = await collectFiles(root, maxDepth, []);
+  const mdFiles = files.filter((f) => f.endsWith(".md"));
+  console.log(` ${mdFiles.length} markdown files`);
+
+  process.stdout.write("  Analyzing...");
+  const map = await detectKnowledge(files, root);
+  console.log(` done (${map.totalNotes} notes, ${map.decisions.length} decisions, ${map.openQuestions.length} questions)`);
+
+  process.stdout.write("  Writing output...");
+  await writeKnowledgeOutput(map, outputDir, projectName, VERSION);
+  console.log(` ${outputDirName}/KNOWLEDGE.md`);
+
+  const elapsed = Date.now() - startTime;
+
+  // Note type breakdown
+  const typeCounts = new Map<string, number>();
+  for (const note of map.notes) {
+    typeCounts.set(note.type, (typeCounts.get(note.type) || 0) + 1);
+  }
+  const breakdown = [...typeCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([t, n]) => `${t}: ${n}`)
+    .join(", ");
+
+  console.log(`
+  Results:
+    Notes:        ${map.totalNotes}
+    Decisions:    ${map.decisions.length}
+    Questions:    ${map.openQuestions.length}
+    Themes:       ${map.recurringThemes.length}
+    People:       ${map.people.length}
+    ${breakdown ? `Breakdown:    ${breakdown}` : ""}
+
+  Done in ${elapsed}ms
+`);
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
@@ -392,6 +443,7 @@ async function main() {
   let doEval = false;
   let maxTokens = 0;
   let doSince = "";
+  let mode = "code";
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -430,6 +482,8 @@ async function main() {
       maxTokens = parseInt(args[++i], 10);
     } else if (arg === "--since" && args[i + 1]) {
       doSince = args[++i];
+    } else if (arg === "--mode" && args[i + 1]) {
+      mode = args[++i];
     } else if (!arg.startsWith("-")) {
       targetDir = resolve(arg);
     }
@@ -482,6 +536,12 @@ async function main() {
   // Install git hook
   if (doHook) {
     await installGitHook(root, outputDirName);
+  }
+
+  // Knowledge mode: scan .md files instead of code
+  if (mode === "knowledge") {
+    await runKnowledgeScan(root, outputDirName, maxDepth);
+    return;
   }
 
   // Run scan (passes config for disabled detectors + plugins)

@@ -42,6 +42,31 @@ export type ORM = "drizzle" | "prisma" | "typeorm" | "sqlalchemy" | "django" | "
 
 export type ComponentFramework = "react" | "vue" | "svelte" | "flutter" | "unknown";
 
+export type KnowledgeNoteType = "decision" | "meeting" | "retro" | "spec" | "backlog" | "research" | "session" | "general";
+
+export interface KnowledgeNote {
+  file: string;
+  title: string;
+  type: KnowledgeNoteType;
+  date?: string;
+  tags: string[];
+  summary: string;
+  decisions: string[];
+  openQuestions: string[];
+  people: string[];
+}
+
+export interface KnowledgeMap {
+  notes: KnowledgeNote[];
+  totalNotes: number;
+  decisions: string[];
+  openQuestions: string[];
+  recurringThemes: string[];
+  people: string[];
+  projects: string[];
+  dateRange?: { from: string; to: string };
+}
+
 export interface ProjectInfo {
   root: string;
   name: string;
