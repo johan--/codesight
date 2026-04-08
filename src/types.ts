@@ -32,6 +32,9 @@ export type Framework =
   | "vapor"
   | "swiftui"
   | "flutter"
+  | "graphql"
+  | "grpc"
+  | "websocket"
   | "unknown";
 
 export type ORM = "drizzle" | "prisma" | "typeorm" | "sqlalchemy" | "django" | "gorm" | "mongoose" | "sequelize" | "activerecord" | "ecto" | "eloquent" | "entity-framework" | "unknown";
@@ -144,7 +147,7 @@ export interface BlastRadiusResult {
 }
 
 export interface CodesightConfig {
-  /** Disable specific detectors: "routes", "schema", "components", "libs", "config", "middleware", "graph" */
+  /** Disable specific detectors: "routes", "schema", "components", "libs", "config", "middleware", "graph", "graphql", "events" */
   disableDetectors?: string[];
   /** Custom route tags: { "billing": ["stripe", "payment"] } */
   customTags?: Record<string, string[]>;
@@ -162,6 +165,10 @@ export interface CodesightConfig {
   blastRadiusDepth?: number;
   /** Hot file threshold: min imports to be "hot" (default: 3) */
   hotFileThreshold?: number;
+  /** Max output tokens — intelligently trims lower-importance items to fit budget */
+  maxTokens?: number;
+  /** Collapse standard CRUD route groups into single summary lines (default: true) */
+  collapseCrud?: boolean;
   /** Plugin hooks */
   plugins?: CodesightPlugin[];
 }
@@ -186,6 +193,27 @@ export interface PluginDetectorResult {
   middleware?: MiddlewareInfo[];
 }
 
+export interface EventInfo {
+  name: string;
+  type: "queue" | "topic" | "event" | "channel";
+  system: "bullmq" | "kafka" | "redis-pub-sub" | "socket.io" | "eventemitter" | "unknown";
+  file: string;
+  payloadType?: string;
+}
+
+export interface CrudGroup {
+  resource: string;   // e.g. "/users"
+  methods: string[];  // e.g. ["GET", "POST", "GET/:id", "PUT/:id", "DELETE/:id"]
+  modelHint?: string; // e.g. "User"
+}
+
+export interface TestCoverage {
+  testedRoutes: string[];   // "METHOD:path" keys
+  testedModels: string[];
+  testFiles: string[];
+  coveragePercent: number;
+}
+
 export interface ScanResult {
   project: ProjectInfo;
   routes: RouteInfo[];
@@ -196,6 +224,9 @@ export interface ScanResult {
   middleware: MiddlewareInfo[];
   graph: DependencyGraph;
   tokenStats: TokenStats;
+  events?: EventInfo[];
+  testCoverage?: TestCoverage;
+  crudGroups?: CrudGroup[];
 }
 
 export interface TokenStats {

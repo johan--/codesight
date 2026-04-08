@@ -2,9 +2,13 @@
 
 ## Most Imported Files (change these carefully)
 
-- `src/types.ts` — imported by **24** files
-- `src/scanner.ts` — imported by **11** files
+- `src/types.ts` — imported by **35** files
+- `src/scanner.ts` — imported by **14** files
 - `src/ast/loader.ts` — imported by **6** files
+- `src/ast/extract-dart.ts` — imported by **3** files
+- `src/ast/extract-swift.ts` — imported by **3** files
+- `src/ast/extract-csharp.ts` — imported by **3** files
+- `src/ast/extract-php.ts` — imported by **3** files
 - `src/detectors/routes.ts` — imported by **3** files
 - `src/detectors/schema.ts` — imported by **3** files
 - `src/detectors/components.ts` — imported by **3** files
@@ -17,21 +21,17 @@
 - `src/detectors/graph.ts` — imported by **2** files
 - `src/detectors/contracts.ts` — imported by **2** files
 - `src/detectors/tokens.ts` — imported by **2** files
-- `src/formatter.ts` — imported by **2** files
-- `src/generators/ai-config.ts` — imported by **2** files
-- `src/generators/wiki.ts` — imported by **2** files
-- `src/detectors/blast-radius.ts` — imported by **2** files
-- `tests/fixtures/graph-app/src/auth.ts` — imported by **2** files
+- `src/detectors/graphql.ts` — imported by **2** files
 
 ## Import Map (who imports what)
 
-- `src/types.ts` ← `src/ast/extract-components.ts`, `src/ast/extract-go.ts`, `src/ast/extract-python.ts`, `src/ast/extract-routes.ts`, `src/ast/extract-schema.ts` +19 more
-- `src/scanner.ts` ← `src/detectors/components.ts`, `src/detectors/config.ts`, `src/detectors/contracts.ts`, `src/detectors/graph.ts`, `src/detectors/libs.ts` +6 more
+- `src/types.ts` ← `src/ast/extract-components.ts`, `src/ast/extract-csharp.ts`, `src/ast/extract-dart.ts`, `src/ast/extract-go.ts`, `src/ast/extract-php.ts` +30 more
+- `src/scanner.ts` ← `src/detectors/components.ts`, `src/detectors/config.ts`, `src/detectors/contracts.ts`, `src/detectors/coverage.ts`, `src/detectors/events.ts` +9 more
 - `src/ast/loader.ts` ← `src/ast/extract-components.ts`, `src/ast/extract-routes.ts`, `src/ast/extract-schema.ts`, `src/detectors/components.ts`, `src/detectors/routes.ts` +1 more
+- `src/ast/extract-dart.ts` ← `src/detectors/components.ts`, `src/detectors/libs.ts`, `src/detectors/routes.ts`
+- `src/ast/extract-swift.ts` ← `src/detectors/components.ts`, `src/detectors/libs.ts`, `src/detectors/routes.ts`
+- `src/ast/extract-csharp.ts` ← `src/detectors/libs.ts`, `src/detectors/routes.ts`, `src/detectors/schema.ts`
+- `src/ast/extract-php.ts` ← `src/detectors/libs.ts`, `src/detectors/routes.ts`, `src/detectors/schema.ts`
 - `src/detectors/routes.ts` ← `src/eval.ts`, `src/index.ts`, `src/mcp-server.ts`
 - `src/detectors/schema.ts` ← `src/eval.ts`, `src/index.ts`, `src/mcp-server.ts`
 - `src/detectors/components.ts` ← `src/eval.ts`, `src/index.ts`, `src/mcp-server.ts`
-- `src/detectors/config.ts` ← `src/eval.ts`, `src/index.ts`, `src/mcp-server.ts`
-- `src/detectors/middleware.ts` ← `src/eval.ts`, `src/index.ts`, `src/mcp-server.ts`
-- `tests/fixtures/graph-app/src/db.ts` ← `tests/fixtures/graph-app/src/auth.ts`, `tests/fixtures/graph-app/src/middleware.ts`, `tests/fixtures/graph-app/src/routes.ts`
-- `src/ast/extract-python.ts` ← `src/detectors/routes.ts`, `src/detectors/schema.ts`

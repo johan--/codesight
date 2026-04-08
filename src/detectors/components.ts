@@ -176,16 +176,38 @@ async function detectReactComponents(
     // Detect props
     const props: string[] = [];
 
-    // interface/type Props { ... }
+    // interface/type XxxProps { ... } — match any *Props* named interface/type
     const propsPattern =
-      /(?:interface|type)\s+(?:\w*Props\w*)\s*(?:=\s*)?\{([^}]*)}/;
-    const propsMatch = content.match(propsPattern);
-    if (propsMatch) {
-      const propsBody = propsMatch[1];
-      for (const line of propsBody.split("\n")) {
+      /(?:interface|type)\s+(\w*Props\w*)\s*(?:=\s*)?\{([^}]*)}/g;
+    let propsMatch: RegExpExecArray | null;
+    while ((propsMatch = propsPattern.exec(content)) !== null) {
+      for (const line of propsMatch[2].split("\n")) {
         const propMatch = line.match(/^\s*(\w+)\s*[?]?\s*:/);
         if (propMatch && propMatch[1] !== "children") {
-          props.push(propMatch[1]);
+          if (!props.includes(propMatch[1])) props.push(propMatch[1]);
+        }
+      }
+      if (props.length > 0) break; // use first Props interface found
+    }
+
+    // React.FC<Props> / React.FunctionComponent<Props> type annotation
+    if (props.length === 0) {
+      const fcMatch = content.match(/:\s*React\.(?:FC|FunctionComponent)<\{([^}>]*)}/);
+      if (fcMatch) {
+        for (const line of fcMatch[1].split(";")) {
+          const propMatch = line.match(/^\s*(\w+)\s*[?]?\s*:/);
+          if (propMatch && propMatch[1] !== "children") props.push(propMatch[1]);
+        }
+      }
+    }
+
+    // forwardRef: React.forwardRef<Ref, Props>((props, ref) => ...) or forwardRef(({ prop1, prop2 }, ref) => ...)
+    if (props.length === 0) {
+      const forwardRefMatch = content.match(/forwardRef\s*(?:<[^>]*>)?\s*\(\s*\(\s*\{([^}]*)\}/);
+      if (forwardRefMatch) {
+        for (const prop of forwardRefMatch[1].split(",")) {
+          const trimmed = prop.trim().split(/[=:]/)[0].trim();
+          if (trimmed && trimmed !== "children" && !trimmed.startsWith("...")) props.push(trimmed);
         }
       }
     }
@@ -197,6 +219,21 @@ async function detectReactComponents(
       );
       if (destructuredMatch) {
         for (const prop of destructuredMatch[1].split(",")) {
+          const trimmed = prop.trim().split(/[=:]/)[0].trim();
+          if (trimmed && trimmed !== "children" && !trimmed.startsWith("...")) {
+            props.push(trimmed);
+          }
+        }
+      }
+    }
+
+    // Arrow function const Component = ({ prop1, prop2 }: Props) => ...
+    if (props.length === 0) {
+      const arrowDestructuredMatch = content.match(
+        new RegExp(`const\\s+${name}[^=]*=\\s*\\(\\s*\\{([^}]*)\\}`)
+      );
+      if (arrowDestructuredMatch) {
+        for (const prop of arrowDestructuredMatch[1].split(",")) {
           const trimmed = prop.trim().split(/[=:]/)[0].trim();
           if (trimmed && trimmed !== "children" && !trimmed.startsWith("...")) {
             props.push(trimmed);

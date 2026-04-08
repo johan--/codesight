@@ -1,5 +1,6 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, writeFile, stat } from "node:fs/promises";
 import { join, relative, basename, extname } from "node:path";
+import { createHash } from "node:crypto";
 import type {
   Framework,
   ORM,
@@ -54,7 +55,58 @@ const CODE_EXTENSIONS = new Set([
   ".dart",
   ".swift",
   ".cs",
+  // Additional file types for new detectors
+  ".graphql",
+  ".gql",
+  ".proto",
+  ".sql",
 ]);
+
+/**
+ * Read .codesightignore at the project root and return ignore patterns.
+ * One glob pattern per line. Lines starting with # are comments.
+ */
+export async function readCodesightIgnore(root: string): Promise<string[]> {
+  try {
+    const content = await readFile(join(root, ".codesightignore"), "utf-8");
+    return content
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * File hash cache — persists per-file content hashes so incremental scans
+ * only reprocess files that changed. Cache stored in .codesight/cache.json.
+ */
+export interface FileHashCache {
+  version: number;
+  hashes: Record<string, string>; // relative path -> sha1 hash
+}
+
+export async function loadFileHashCache(outputDir: string): Promise<FileHashCache> {
+  try {
+    const raw = await readFile(join(outputDir, "cache.json"), "utf-8");
+    return JSON.parse(raw) as FileHashCache;
+  } catch {
+    return { version: 1, hashes: {} };
+  }
+}
+
+export async function saveFileHashCache(outputDir: string, cache: FileHashCache): Promise<void> {
+  try {
+    await writeFile(join(outputDir, "cache.json"), JSON.stringify(cache, null, 2));
+  } catch {
+    // Non-fatal — cache is a perf optimization only
+  }
+}
+
+export function hashFileContent(content: string): string {
+  return createHash("sha1").update(content).digest("hex").slice(0, 12);
+}
 
 export async function collectFiles(
   root: string,

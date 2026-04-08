@@ -64,6 +64,18 @@ export async function detectSchemas(
     }
   }
 
+  // Raw SQL migrations — detect CREATE TABLE when no ORM covers it
+  const ormNames = new Set(project.orms);
+  const hasSchemaORM = ormNames.size > 0 && !ormNames.has("unknown");
+  if (!hasSchemaORM || models.length === 0) {
+    const sqlModels = await detectRawSQLSchemas(files, project);
+    // Only add if not already covered by ORM detection
+    const existingNames = new Set(models.map((m) => m.name.toLowerCase()));
+    for (const m of sqlModels) {
+      if (!existingNames.has(m.name.toLowerCase())) models.push(m);
+    }
+  }
+
   return models;
 }
 
@@ -840,6 +852,93 @@ async function detectSequelizeSchemas(
       if (seenNames.has(name)) continue;
       seenNames.add(name);
       models.push({ name, fields: parseSequelizeFields(m[2]), relations: [], orm: "sequelize" });
+    }
+  }
+
+  return models;
+}
+
+// --- Raw SQL migrations ---
+const SQL_TYPE_MAP: Record<string, string> = {
+  "serial": "integer(auto)", "bigserial": "bigint(auto)",
+  "int": "integer", "integer": "integer", "bigint": "bigint", "smallint": "smallint",
+  "text": "text", "varchar": "varchar", "char": "char", "character varying": "varchar",
+  "boolean": "boolean", "bool": "boolean",
+  "timestamp": "timestamp", "timestamptz": "timestamp(tz)", "date": "date", "time": "time",
+  "uuid": "uuid", "json": "json", "jsonb": "jsonb",
+  "float": "float", "real": "real", "double precision": "float8", "numeric": "numeric", "decimal": "decimal",
+  "bytea": "bytes", "blob": "bytes",
+};
+
+async function detectRawSQLSchemas(
+  files: string[],
+  _project: ProjectInfo
+): Promise<SchemaModel[]> {
+  const sqlFiles = files.filter((f) => f.endsWith(".sql"));
+  const models: SchemaModel[] = [];
+  const seenNames = new Set<string>();
+
+  for (const file of sqlFiles) {
+    const content = await readFileSafe(file);
+    if (!content) continue;
+
+    // CREATE TABLE [IF NOT EXISTS] schema.table_name ( ... )
+    const createTablePat =
+      /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[\w"]+\.)?\s*["']?([\w]+)["']?\s*\(([\s\S]*?)(?:\)\s*;|\)\s*\n)/gi;
+
+    let m: RegExpExecArray | null;
+    while ((m = createTablePat.exec(content)) !== null) {
+      const tableName = m[1];
+      if (seenNames.has(tableName.toLowerCase())) continue;
+      if (tableName.toLowerCase().startsWith("pg_") || tableName.toLowerCase() === "schema_migrations") continue;
+      seenNames.add(tableName.toLowerCase());
+
+      const body = m[2];
+      const fields: SchemaField[] = [];
+      const relations: string[] = [];
+
+      for (const rawLine of body.split(",")) {
+        const line = rawLine.trim().replace(/--.*$/, "").trim();
+        if (!line) continue;
+
+        if (/^(PRIMARY\s+KEY|UNIQUE|CHECK|FOREIGN\s+KEY|CONSTRAINT|INDEX)/i.test(line)) {
+          const fkMatch = line.match(/FOREIGN\s+KEY\s*\((\w+)\)\s*REFERENCES\s+(\w+)\s*\((\w+)\)/i);
+          if (fkMatch) relations.push(`${fkMatch[1]} -> ${fkMatch[2]}.${fkMatch[3]}`);
+          continue;
+        }
+
+        const colMatch = line.match(/^["']?(\w+)["']?\s+([\w\s()]+?)(?:\s+(NOT\s+NULL|NULL|PRIMARY\s+KEY|UNIQUE|DEFAULT|REFERENCES|GENERATED)[\s\S]*)?$/i);
+        if (!colMatch) continue;
+
+        const colName = colMatch[1];
+        if (["CONSTRAINT", "INDEX", "KEY", "UNIQUE", "CHECK", "PRIMARY"].includes(colName.toUpperCase())) continue;
+
+        const rawType = colMatch[2].trim().toLowerCase().replace(/\s*\([^)]*\)/, "");
+        const mappedType = SQL_TYPE_MAP[rawType] || rawType;
+        const rest = colMatch[3] || "";
+
+        const flags: string[] = [];
+        if (/PRIMARY\s+KEY/i.test(rest) || /PRIMARY\s+KEY/i.test(line)) flags.push("pk");
+        if (/NOT\s+NULL/i.test(rest)) flags.push("required");
+        if (/UNIQUE/i.test(rest)) flags.push("unique");
+        if (/DEFAULT/i.test(rest)) flags.push("default");
+        if (/REFERENCES/i.test(rest)) {
+          flags.push("fk");
+          const refMatch = rest.match(/REFERENCES\s+(\w+)/i);
+          if (refMatch) relations.push(`${colName} -> ${refMatch[1]}`);
+        }
+        if (colName.endsWith("_id") || colName.endsWith("Id")) {
+          if (!flags.includes("fk")) flags.push("fk");
+        }
+
+        if (!AUDIT_FIELDS.has(colName)) {
+          fields.push({ name: colName, type: mappedType, flags });
+        }
+      }
+
+      if (fields.length > 0) {
+        models.push({ name: tableName, fields, relations, orm: "unknown", confidence: "ast" });
+      }
     }
   }
 

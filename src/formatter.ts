@@ -8,6 +8,11 @@ export async function writeOutput(
 ): Promise<string> {
   await mkdir(outputDir, { recursive: true });
 
+  // Compute CRUD groups before formatting
+  if (result.crudGroups === undefined) {
+    result.crudGroups = computeCrudGroups(result.routes);
+  }
+
   const sections: { name: string; content: string }[] = [];
 
   if (result.routes.length > 0) {
@@ -52,6 +57,18 @@ export async function writeOutput(
     await writeFile(join(outputDir, "graph.md"), content);
   }
 
+  if (result.events && result.events.length > 0) {
+    const content = formatEvents(result);
+    sections.push({ name: "events", content });
+    await writeFile(join(outputDir, "events.md"), content);
+  }
+
+  if (result.testCoverage && result.testCoverage.testFiles.length > 0) {
+    const content = formatCoverage(result);
+    sections.push({ name: "coverage", content });
+    await writeFile(join(outputDir, "coverage.md"), content);
+  }
+
   const combined = formatCombined(result, sections);
   await writeFile(join(outputDir, "CODESIGHT.md"), combined);
 
@@ -61,26 +78,111 @@ export async function writeOutput(
 function formatRoutes(result: ScanResult): string {
   const lines: string[] = ["# Routes", ""];
 
-  const byFramework = new Map<string, typeof result.routes>();
-  for (const route of result.routes) {
+  // Separate HTTP routes from special protocols
+  const httpRoutes = result.routes.filter(
+    (r) => !["QUERY", "MUTATION", "SUBSCRIPTION", "RPC", "WS", "WS-ROOM"].includes(r.method)
+  );
+  const graphqlRoutes = result.routes.filter((r) =>
+    ["QUERY", "MUTATION", "SUBSCRIPTION"].includes(r.method)
+  );
+  const grpcRoutes = result.routes.filter((r) => r.method === "RPC");
+  const wsRoutes = result.routes.filter((r) => r.method === "WS" || r.method === "WS-ROOM");
+
+  // Build set of routes that belong to a CRUD group (to collapse them)
+  const crudGroupedPaths = new Set<string>();
+  if (result.crudGroups && result.crudGroups.length > 0) {
+    for (const group of result.crudGroups) {
+      for (const route of httpRoutes) {
+        const base = route.path.replace(/\/:[^/]+$/, "").replace(/\/\{[^}]+\}$/, "");
+        if (base === group.resource) crudGroupedPaths.add(`${route.method}:${route.path}`);
+      }
+    }
+  }
+
+  // Group HTTP routes by framework
+  const byFramework = new Map<string, typeof httpRoutes>();
+  for (const route of httpRoutes) {
     const fw = route.framework;
     if (!byFramework.has(fw)) byFramework.set(fw, []);
     byFramework.get(fw)!.push(route);
   }
 
-  for (const [fw, routes] of byFramework) {
-    if (byFramework.size > 1) {
-      lines.push(`## ${fw}`, "");
+  // Output CRUD groups summary first
+  if (result.crudGroups && result.crudGroups.length > 0) {
+    lines.push("## CRUD Resources", "");
+    for (const group of result.crudGroups) {
+      const modelStr = group.modelHint ? ` → ${group.modelHint}` : "";
+      lines.push(`- **\`${group.resource}\`** ${group.methods.join(" | ")}${modelStr}`);
+    }
+    lines.push("");
+  }
+
+  // Output remaining non-CRUD HTTP routes
+  const hasNonCrud = Array.from(byFramework.values()).some((routes) =>
+    routes.some((r) => !crudGroupedPaths.has(`${r.method}:${r.path}`))
+  );
+
+  if (hasNonCrud) {
+    if (result.crudGroups && result.crudGroups.length > 0) {
+      lines.push("## Other Routes", "");
     }
 
-    for (const route of routes) {
-      const tags = route.tags.length > 0 ? ` [${route.tags.join(", ")}]` : "";
-      const params = route.params ? ` params(${route.params.join(", ")})` : "";
-      const contract: string[] = [];
-      if (route.requestType) contract.push(`in: ${route.requestType}`);
-      if (route.responseType) contract.push(`out: ${route.responseType}`);
-      const contractStr = contract.length > 0 ? ` → ${contract.join(", ")}` : "";
-      lines.push(`- \`${route.method}\` \`${route.path}\`${params}${contractStr}${tags}`);
+    for (const [fw, routes] of byFramework) {
+      const nonCrud = routes.filter((r) => !crudGroupedPaths.has(`${r.method}:${r.path}`));
+      if (nonCrud.length === 0) continue;
+
+      if (byFramework.size > 1) lines.push(`### ${fw}`, "");
+
+      for (const route of nonCrud) {
+        const testMark = result.testCoverage?.testedRoutes.includes(`${route.method}:${route.path}`) ? " ✓" : "";
+        const tags = route.tags.length > 0 ? ` [${route.tags.join(", ")}]` : "";
+        const params = route.params ? ` params(${route.params.join(", ")})` : "";
+        const contract: string[] = [];
+        if (route.requestType) contract.push(`in: ${route.requestType}`);
+        if (route.responseType) contract.push(`out: ${route.responseType}`);
+        const contractStr = contract.length > 0 ? ` → ${contract.join(", ")}` : "";
+        lines.push(`- \`${route.method}\` \`${route.path}\`${params}${contractStr}${tags}${testMark}`);
+      }
+      lines.push("");
+    }
+  }
+
+  // GraphQL operations
+  if (graphqlRoutes.length > 0) {
+    lines.push("## GraphQL", "");
+    const byType = new Map<string, typeof graphqlRoutes>();
+    for (const r of graphqlRoutes) {
+      if (!byType.has(r.method)) byType.set(r.method, []);
+      byType.get(r.method)!.push(r);
+    }
+    for (const [method, ops] of byType) {
+      lines.push(`### ${method}`);
+      for (const op of ops) {
+        const contract: string[] = [];
+        if (op.requestType) contract.push(`in: ${op.requestType}`);
+        if (op.responseType) contract.push(`out: ${op.responseType}`);
+        const contractStr = contract.length > 0 ? ` → ${contract.join(", ")}` : "";
+        lines.push(`- \`${op.path}\`${contractStr}`);
+      }
+      lines.push("");
+    }
+  }
+
+  // gRPC
+  if (grpcRoutes.length > 0) {
+    lines.push("## gRPC", "");
+    for (const r of grpcRoutes) {
+      const contract = r.requestType && r.responseType ? ` (${r.requestType}) → ${r.responseType}` : "";
+      lines.push(`- \`${r.path}\`${contract}`);
+    }
+    lines.push("");
+  }
+
+  // WebSocket events
+  if (wsRoutes.length > 0) {
+    lines.push("## WebSocket Events", "");
+    for (const r of wsRoutes) {
+      lines.push(`- \`${r.method}\` \`${r.path}\` — \`${r.file}\``);
     }
     lines.push("");
   }
@@ -282,8 +384,26 @@ function formatCombined(
 
   // Token stats
   const ts = result.tokenStats;
+  const httpRouteCount = result.routes.filter(
+    (r) => !["QUERY", "MUTATION", "SUBSCRIPTION", "RPC", "WS", "WS-ROOM"].includes(r.method)
+  ).length;
+  const gqlCount = result.routes.filter((r) => ["QUERY", "MUTATION", "SUBSCRIPTION"].includes(r.method)).length;
+  const wsCount = result.routes.filter((r) => r.method === "WS" || r.method === "WS-ROOM").length;
+  const grpcCount = result.routes.filter((r) => r.method === "RPC").length;
+  const eventCount = result.events?.length ?? 0;
+  const coveragePct = result.testCoverage?.coveragePercent;
+
+  let routeStr = `${httpRouteCount} routes`;
+  if (gqlCount > 0) routeStr += ` + ${gqlCount} graphql`;
+  if (grpcCount > 0) routeStr += ` + ${grpcCount} rpc`;
+  if (wsCount > 0) routeStr += ` + ${wsCount} ws`;
+
+  let extras = "";
+  if (eventCount > 0) extras += ` | ${eventCount} events`;
+  if (coveragePct !== undefined) extras += ` | ${coveragePct}% test coverage`;
+
   lines.push(
-    `> ${result.routes.length} routes | ${result.schemas.length} models | ${result.components.length} components | ${result.libs.length} lib files | ${result.config.envVars.length} env vars | ${result.middleware.length} middleware | ${result.graph.edges.length} import links`
+    `> ${routeStr} | ${result.schemas.length} models | ${result.components.length} components | ${result.libs.length} lib files | ${result.config.envVars.length} env vars | ${result.middleware.length} middleware${extras}`
   );
   // Round to nearest 100 to keep output deterministic across runs (avoids git conflicts in worktrees)
   const roundTo100 = (n: number) => Math.round(n / 100) * 100;
@@ -333,4 +453,114 @@ function filterNotableDeps(deps: Record<string, string>): [string, string][] {
   return Object.entries(deps)
     .filter(([name]) => notable.has(name))
     .sort(([a], [b]) => a.localeCompare(b));
+}
+
+// --- Events / Queues ---
+function formatEvents(result: ScanResult): string {
+  const events = result.events;
+  if (!events || events.length === 0) return "";
+
+  const lines: string[] = ["# Events & Queues", ""];
+
+  const bySystem = new Map<string, typeof events>();
+  for (const e of events) {
+    if (!bySystem.has(e.system)) bySystem.set(e.system, []);
+    bySystem.get(e.system)!.push(e);
+  }
+
+  for (const [system, items] of bySystem) {
+    if (bySystem.size > 1) lines.push(`## ${system}`, "");
+    for (const item of items) {
+      const payload = item.payloadType ? ` → ${item.payloadType}` : "";
+      lines.push(`- \`${item.name}\` [${item.type}]${payload} — \`${item.file}\``);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+// --- Test Coverage ---
+function formatCoverage(result: ScanResult): string {
+  const cov = result.testCoverage;
+  if (!cov || cov.testFiles.length === 0) return "";
+
+  const lines: string[] = ["# Test Coverage", ""];
+
+  lines.push(`> **${cov.coveragePercent}%** of routes and models are covered by tests`);
+  lines.push(`> ${cov.testFiles.length} test files found`);
+  lines.push("");
+
+  if (cov.testedRoutes.length > 0) {
+    lines.push("## Covered Routes", "");
+    for (const r of cov.testedRoutes) {
+      lines.push(`- ${r}`);
+    }
+    lines.push("");
+  }
+
+  if (cov.testedModels.length > 0) {
+    lines.push("## Covered Models", "");
+    for (const m of cov.testedModels) {
+      lines.push(`- ${m}`);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+// --- CRUD group computation ---
+/**
+ * Detect standard CRUD groups: same resource base path with GET, POST,
+ * GET/:id, PUT/:id, DELETE/:id — collapse to a summary line in routes output.
+ */
+export function computeCrudGroups(routes: ScanResult["routes"]): import("./types.js").CrudGroup[] {
+  const httpRoutes = routes.filter(
+    (r) => !["QUERY", "MUTATION", "SUBSCRIPTION", "RPC", "WS", "WS-ROOM"].includes(r.method)
+  );
+
+  // Group by base resource — strip trailing :id or :param
+  const byBase = new Map<string, typeof httpRoutes>();
+  for (const route of httpRoutes) {
+    const base = route.path.replace(/\/:[^/]+$/, "").replace(/\/\{[^}]+\}$/, "");
+    if (!byBase.has(base)) byBase.set(base, []);
+    byBase.get(base)!.push(route);
+  }
+
+  const groups: import("./types.js").CrudGroup[] = [];
+
+  for (const [base, groupRoutes] of byBase) {
+    const methods = new Set(groupRoutes.map((r) => r.method));
+    const hasList = methods.has("GET") && groupRoutes.some((r) => r.path === base);
+    const hasCreate = methods.has("POST");
+    const hasGet = methods.has("GET") && groupRoutes.some((r) => r.path !== base);
+    const hasUpdate = methods.has("PUT") || methods.has("PATCH");
+    const hasDelete = methods.has("DELETE");
+
+    const crudCount = [hasList, hasCreate, hasGet, hasUpdate, hasDelete].filter(Boolean).length;
+
+    if (crudCount >= 3 && groupRoutes.length >= 3) {
+      const methodLabels: string[] = [];
+      if (hasList) methodLabels.push("GET");
+      if (hasCreate) methodLabels.push("POST");
+      if (hasGet) methodLabels.push("GET/:id");
+      if (hasUpdate) methodLabels.push(methods.has("PUT") ? "PUT/:id" : "PATCH/:id");
+      if (hasDelete) methodLabels.push("DELETE/:id");
+
+      // Guess model name from base path
+      const segments = base.split("/").filter(Boolean);
+      const lastSegment = segments[segments.length - 1] || "";
+      const modelHint = lastSegment.charAt(0).toUpperCase() +
+        lastSegment.slice(1).replace(/s$/, ""); // naive depluralize
+
+      groups.push({
+        resource: base,
+        methods: methodLabels,
+        modelHint,
+      });
+    }
+  }
+
+  return groups;
 }

@@ -1,5 +1,5 @@
 import { resolve, join } from "node:path";
-import { collectFiles, detectProject } from "./scanner.js";
+import { collectFiles, detectProject, readCodesightIgnore } from "./scanner.js";
 import { loadConfig } from "./config.js";
 import { detectRoutes } from "./detectors/routes.js";
 import { detectSchemas } from "./detectors/schema.js";
@@ -10,7 +10,9 @@ import { detectMiddleware } from "./detectors/middleware.js";
 import { detectDependencyGraph } from "./detectors/graph.js";
 import { enrichRouteContracts } from "./detectors/contracts.js";
 import { calculateTokenStats } from "./detectors/tokens.js";
-import { writeOutput } from "./formatter.js";
+import { detectGraphQLRoutes, detectGRPCRoutes, detectWebSocketRoutes } from "./detectors/graphql.js";
+import { detectEvents } from "./detectors/events.js";
+import { writeOutput, computeCrudGroups } from "./formatter.js";
 import { analyzeBlastRadius, analyzeMultiFileBlastRadius } from "./detectors/blast-radius.js";
 import { readWikiArticle, listWikiArticles, lintWiki } from "./generators/wiki.js";
 import type { ScanResult } from "./types.js";
@@ -62,9 +64,12 @@ async function getScanResult(directory?: string): Promise<ScanResult> {
 
   const project = await detectProject(root);
   const userConfig = await loadConfig(root);
-  const files = await collectFiles(root, userConfig.maxDepth ?? 10, userConfig.ignorePatterns ?? []);
+  const ignoreFromFile = await readCodesightIgnore(root);
+  const allIgnore = [...(userConfig.ignorePatterns ?? []), ...ignoreFromFile];
+  const files = await collectFiles(root, userConfig.maxDepth ?? 10, allIgnore);
 
-  const [rawRoutes, schemas, components, libs, config, middleware, graph] = await Promise.all([
+  const [rawHttpRoutes, schemas, components, libs, config, middleware, graph,
+         graphqlRoutes, grpcRoutes, wsRoutes, events] = await Promise.all([
     detectRoutes(files, project),
     detectSchemas(files, project),
     detectComponents(files, project),
@@ -72,9 +77,15 @@ async function getScanResult(directory?: string): Promise<ScanResult> {
     detectConfig(files, project),
     detectMiddleware(files, project),
     detectDependencyGraph(files, project),
+    detectGraphQLRoutes(files, project),
+    detectGRPCRoutes(files, project),
+    detectWebSocketRoutes(files, project),
+    detectEvents(files, project),
   ]);
 
+  const rawRoutes = [...rawHttpRoutes, ...graphqlRoutes, ...grpcRoutes, ...wsRoutes];
   const routes = await enrichRouteContracts(rawRoutes, project);
+  const crudGroups = computeCrudGroups(routes);
 
   const tempResult: ScanResult = {
     project,
@@ -86,6 +97,8 @@ async function getScanResult(directory?: string): Promise<ScanResult> {
     middleware,
     graph,
     tokenStats: { outputTokens: 0, estimatedExplorationTokens: 0, saved: 0, fileCount: files.length },
+    events: events.length > 0 ? events : undefined,
+    crudGroups: crudGroups.length > 0 ? crudGroups : undefined,
   };
 
   const outputContent = await writeOutput(tempResult, resolve(root, ".codesight"));
@@ -336,6 +349,75 @@ async function toolLintWiki(args: any): Promise<string> {
   return lintWiki(result, outputDir);
 }
 
+async function toolGetEvents(args: any): Promise<string> {
+  const result = await getScanResult(args.directory);
+  const events = result.events;
+  if (!events || events.length === 0) {
+    return "No async events or queues detected. Events are auto-detected from BullMQ, Kafka, Redis pub/sub, Socket.io, and EventEmitter usage.";
+  }
+
+  let filtered = events;
+  if (args.system) {
+    filtered = events.filter((e) => e.system === args.system);
+    if (filtered.length === 0) return `No events found for system: ${args.system}`;
+  }
+
+  const lines = [`Events & Queues (${filtered.length} total)`, ""];
+  const bySystem = new Map<string, typeof filtered>();
+  for (const e of filtered) {
+    if (!bySystem.has(e.system)) bySystem.set(e.system, []);
+    bySystem.get(e.system)!.push(e);
+  }
+  for (const [system, items] of bySystem) {
+    lines.push(`## ${system}`);
+    for (const item of items) {
+      lines.push(`- ${item.name} [${item.type}] — ${item.file}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+async function toolGetCoverage(args: any): Promise<string> {
+  const result = await getScanResult(args.directory);
+  const cov = result.testCoverage;
+  if (!cov || cov.testFiles.length === 0) {
+    return "No test files detected. Add test files matching *.test.ts, *.spec.ts, test_*.py, *_test.go, etc.";
+  }
+
+  const httpRoutes = result.routes.filter(
+    (r) => !["QUERY", "MUTATION", "SUBSCRIPTION", "RPC", "WS", "WS-ROOM"].includes(r.method)
+  );
+  const uncoveredRoutes = httpRoutes.filter(
+    (r) => !cov.testedRoutes.includes(`${r.method}:${r.path}`)
+  );
+  const uncoveredModels = result.schemas
+    .filter((m) => !m.name.startsWith("enum:") && !cov.testedModels.includes(m.name));
+
+  const lines = [
+    `Test Coverage: ${cov.coveragePercent}%`,
+    `Test files: ${cov.testFiles.length}`,
+    `Covered routes: ${cov.testedRoutes.length}/${httpRoutes.length}`,
+    `Covered models: ${cov.testedModels.length}/${result.schemas.filter((m) => !m.name.startsWith("enum:")).length}`,
+    "",
+  ];
+
+  if (uncoveredRoutes.length > 0) {
+    lines.push(`Uncovered routes (${uncoveredRoutes.length}):`);
+    for (const r of uncoveredRoutes.slice(0, 20)) {
+      lines.push(`  ${r.method} ${r.path} — ${r.file}`);
+    }
+    if (uncoveredRoutes.length > 20) lines.push(`  ... +${uncoveredRoutes.length - 20} more`);
+    lines.push("");
+  }
+
+  if (uncoveredModels.length > 0) {
+    lines.push(`Uncovered models: ${uncoveredModels.map((m) => m.name).join(", ")}`);
+  }
+
+  return lines.join("\n");
+}
+
 // =================== TOOL DEFINITIONS ===================
 
 const TOOLS = [
@@ -487,6 +569,31 @@ const TOOLS = [
     },
     handler: toolLintWiki,
   },
+  {
+    name: "codesight_get_events",
+    description:
+      "Get event queues, Kafka topics, Redis pub/sub channels, and EventEmitter events detected in the project. Useful for understanding async data flows.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        directory: { type: "string", description: "Directory (defaults to cwd)" },
+        system: { type: "string", description: "Filter by system: bullmq | kafka | redis-pub-sub | socket.io | eventemitter" },
+      },
+    },
+    handler: toolGetEvents,
+  },
+  {
+    name: "codesight_get_coverage",
+    description:
+      "Get test coverage summary: which routes and models have corresponding tests. Shows coverage percentage and lists uncovered endpoints.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        directory: { type: "string", description: "Directory (defaults to cwd)" },
+      },
+    },
+    handler: toolGetCoverage,
+  },
 ];
 
 // =================== MCP PROTOCOL ===================
@@ -499,7 +606,7 @@ async function handleRequest(req: JsonRpcRequest) {
       result: {
         protocolVersion: "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "codesight", version: "1.2.0" },
+        serverInfo: { name: "codesight", version: "1.9.0" },
       },
     });
     return;

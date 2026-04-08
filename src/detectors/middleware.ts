@@ -118,6 +118,7 @@ export async function detectMiddleware(
 
   for (const file of routeFiles) {
     const content = await readFileSafe(file);
+    if (!content) continue;
     const rel = relative(project.root, file);
 
     // app.use(cors()) or app.use(rateLimit(...))
@@ -127,10 +128,38 @@ export async function detectMiddleware(
       const fnName = match[1];
       const type = classifyMiddleware(fnName, "");
       if (type !== "custom") {
-        // Deduplicate
         if (!middleware.some((m) => m.name === fnName)) {
           middleware.push({ name: fnName, file: rel, type });
         }
+      }
+    }
+
+    // Inline route middleware arrays:
+    //   router.get('/path', [authMiddleware, validateBody], handler)
+    //   router.post('/path', requireAuth, validateInput, handler)
+    const inlineArrayPat = /\.(get|post|put|patch|delete)\s*\(\s*['"`][^'"`]+['"`]\s*,\s*\[([^\]]+)\]/gi;
+    while ((match = inlineArrayPat.exec(content)) !== null) {
+      const arrayContent = match[2];
+      for (const part of arrayContent.split(",")) {
+        const mwName = part.trim().replace(/\(.*$/, "");
+        if (!mwName || mwName.length < 3) continue;
+        const type = classifyMiddleware(mwName, "");
+        if (type !== "custom" && !middleware.some((m) => m.name === mwName)) {
+          middleware.push({ name: mwName, file: rel, type });
+        }
+      }
+    }
+
+    // Inline middleware without array — router.get('/path', authMiddleware, handler)
+    // Detect named functions in the middle argument position (not first, not last)
+    const inlineArgsPat = /\.(get|post|put|patch|delete)\s*\(\s*['"`][^'"`]+['"`]\s*,\s*(\w+)\s*,\s*(\w+)/gi;
+    while ((match = inlineArgsPat.exec(content)) !== null) {
+      // match[2] is the middle arg (middleware), match[3] is the handler
+      const mwName = match[2];
+      if (!mwName || mwName.length < 3) continue;
+      const type = classifyMiddleware(mwName, "");
+      if (type !== "custom" && !middleware.some((m) => m.name === mwName)) {
+        middleware.push({ name: mwName, file: rel, type });
       }
     }
   }
