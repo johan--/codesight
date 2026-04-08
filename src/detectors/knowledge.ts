@@ -116,7 +116,7 @@ function extractDecisions(content: string): string[] {
   const adrSection = content.match(/##\s*Decision\s*\n+([\s\S]*?)(?=\n##|\n---|\n$)/i);
   if (adrSection) {
     const firstLine = adrSection[1].trim().split("\n").find((l) => l.trim().length > 10);
-    if (firstLine) return [firstLine.replace(/^[-*>]\s*/, "").trim()];
+    if (firstLine) return [cleanWikilinks(firstLine.replace(/^[-*>]\s*/, "").trim())];
   }
 
   // Pattern-based extraction
@@ -134,7 +134,7 @@ function extractDecisions(content: string): string[] {
   for (const pattern of patterns) {
     let m: RegExpExecArray | null;
     while ((m = pattern.exec(content)) !== null) {
-      const d = m[1].trim().replace(/[*_`]/g, "");
+      const d = cleanWikilinks(m[1].trim().replace(/[*_`]/g, ""));
       if (d.length >= 10 && d.length <= 160 && !DECISION_NOISE.test(d)) decisions.push(d);
     }
   }
@@ -306,12 +306,15 @@ export async function detectKnowledge(
   const allPeople = new Set<string>();
   const themeMap = new Map<string, number>();
   const projectSet = new Set<string>();
+  // Store content for backlink analysis after first pass
+  const contentByRel = new Map<string, string>();
 
   for (const file of mdFiles) {
     const content = await readFileSafe(file);
     if (!content || content.trim().length < 30) continue;
 
     const rel = relative(root, file).replace(/\\/g, "/");
+    contentByRel.set(rel, content);
     const filename = rel.split("/").pop() || rel;
     const fm = extractFrontmatter(content);
 
@@ -374,6 +377,66 @@ export async function detectKnowledge(
     .slice(0, 12)
     .map(([t]) => t);
 
+  // ─── Backlink Analysis ───────────────────────────────────────────────────────
+  // Build stem → rel lookup for fuzzy wikilink resolution
+  const stemToRel = new Map<string, string>();
+  for (const note of notes) {
+    const stem = note.file.split("/").pop()!.replace(/\.mdx?$/, "").toLowerCase();
+    stemToRel.set(stem, note.file);
+    // Also index by full path stem for relative markdown links
+    stemToRel.set(note.file.replace(/\.mdx?$/, "").toLowerCase(), note.file);
+  }
+
+  const backlinkCount = new Map<string, number>();
+
+  for (const [sourceRel, content] of contentByRel) {
+    const sourceDir = sourceRel.includes("/") ? sourceRel.slice(0, sourceRel.lastIndexOf("/")) : "";
+
+    // [[wikilink]] and [[wikilink|alias]]
+    for (const m of content.matchAll(/\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g)) {
+      const target = m[1].trim().toLowerCase().replace(/\.mdx?$/, "");
+      const resolved = stemToRel.get(target) || stemToRel.get(target.split("/").pop() || target);
+      if (resolved && resolved !== sourceRel) {
+        backlinkCount.set(resolved, (backlinkCount.get(resolved) || 0) + 1);
+      }
+    }
+
+    // [text](relative-path.md) markdown links
+    for (const m of content.matchAll(/\[(?:[^\]]*)\]\(([^)]+\.mdx?)\)/g)) {
+      let target = m[1].split("#")[0].trim(); // strip anchors
+      // Resolve relative paths
+      if (!target.startsWith("/") && sourceDir) {
+        const parts = (sourceDir + "/" + target).split("/");
+        const resolved: string[] = [];
+        for (const p of parts) {
+          if (p === "..") resolved.pop();
+          else if (p !== ".") resolved.push(p);
+        }
+        target = resolved.join("/");
+      }
+      const targetRel = target.replace(/^\//, "");
+      if (stemToRel.has(targetRel.toLowerCase().replace(/\.mdx?$/, ""))) {
+        const resolved = stemToRel.get(targetRel.toLowerCase().replace(/\.mdx?$/, ""));
+        if (resolved && resolved !== sourceRel) {
+          backlinkCount.set(resolved, (backlinkCount.get(resolved) || 0) + 1);
+        }
+      }
+    }
+  }
+
+  // Annotate notes with backlink counts
+  for (const note of notes) {
+    const count = backlinkCount.get(note.file);
+    if (count) note.backlinks = count;
+  }
+
+  // Hub notes: referenced by 2+ other notes, sorted by ref count
+  const hubNotes = notes
+    .filter((n) => (n.backlinks || 0) >= 2)
+    .sort((a, b) => (b.backlinks || 0) - (a.backlinks || 0))
+    .slice(0, 10)
+    .map((n) => ({ file: n.file, title: n.title, refs: n.backlinks! }));
+
   const datedNotes = notes.filter((n) => n.date);
   const dateRange =
     datedNotes.length >= 2
@@ -389,5 +452,6 @@ export async function detectKnowledge(
     people: [...allPeople].slice(0, 20),
     projects: [...projectSet].slice(0, 10),
     dateRange,
+    hubNotes: hubNotes.length > 0 ? hubNotes : undefined,
   };
 }

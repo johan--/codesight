@@ -580,7 +580,7 @@ const NOTE_TYPE_LABELS: Record<KnowledgeNoteType, string> = {
 
 export function formatKnowledge(map: KnowledgeMap, projectName: string, version: string): string {
   const lines: string[] = [];
-  const { notes, decisions, openQuestions, recurringThemes, people, projects, dateRange } = map;
+  const { notes, decisions, openQuestions, recurringThemes, people, projects, dateRange, hubNotes } = map;
 
   const dateStr = dateRange ? ` · ${dateRange.from} → ${dateRange.to}` : "";
   lines.push(`# Knowledge Map — ${projectName}`);
@@ -647,6 +647,15 @@ export function formatKnowledge(map: KnowledgeMap, projectName: string, version:
     lines.push("");
   }
 
+  // Hub Notes — most referenced notes (the "important" ones in the knowledge graph)
+  if (hubNotes && hubNotes.length > 0) {
+    lines.push(`## Hub Notes (most referenced)`);
+    for (const hub of hubNotes) {
+      lines.push(`- \`${hub.file}\` — **${hub.refs}** incoming references — ${hub.title}`);
+    }
+    lines.push("");
+  }
+
   // Note index grouped by type
   const byType = new Map<KnowledgeNoteType, typeof notes>();
   for (const note of notes) {
@@ -662,8 +671,9 @@ export function formatKnowledge(map: KnowledgeMap, projectName: string, version:
     lines.push(`\n### ${NOTE_TYPE_LABELS[type]} (${group.length})`);
     for (const note of group.slice(0, 20)) {
       const date = note.date ? ` — ${note.date}` : "";
+      const refs = note.backlinks ? ` ← ${note.backlinks} refs` : "";
       const summary = note.summary ? ` — ${note.summary}` : "";
-      const display = note.summary ? `\`${note.file}\`${date}${summary}` : `\`${note.file}\`${date}`;
+      const display = `\`${note.file}\`${date}${refs}${summary}`;
       lines.push(`- ${display}`);
     }
     if (group.length > 20) lines.push(`- _…and ${group.length - 20} more_`);

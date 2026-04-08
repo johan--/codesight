@@ -631,7 +631,7 @@ async function handleRequest(req: JsonRpcRequest) {
       result: {
         protocolVersion: "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "codesight", version: "1.9.6" },
+        serverInfo: { name: "codesight", version: "1.9.7" },
       },
     });
     return;

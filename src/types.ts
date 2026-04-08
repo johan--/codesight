@@ -54,6 +54,7 @@ export interface KnowledgeNote {
   decisions: string[];
   openQuestions: string[];
   people: string[];
+  backlinks?: number; // incoming wikilink/markdown-link references from other notes
 }
 
 export interface KnowledgeMap {
@@ -64,6 +65,7 @@ export interface KnowledgeMap {
   recurringThemes: string[];
   people: string[];
   projects: string[];
+  hubNotes?: { file: string; title: string; refs: number }[];
   dateRange?: { from: string; to: string };
 }
 
