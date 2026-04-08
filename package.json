@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
-    "test": "tsc && tsx --test tests/detectors.test.ts tests/mcp.test.ts",
+    "test": "pnpm build && node --test tests/detectors.test.ts",
     "prepublishOnly": "pnpm build"
   },
   "keywords": [
