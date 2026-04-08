@@ -15,9 +15,22 @@ import { readFileSafe } from "../scanner.js";
 import { relative } from "node:path";
 import type { KnowledgeMap, KnowledgeNote, KnowledgeNoteType } from "../types.js";
 
+// Files that should never be classified as decision/meeting/etc — always general
+const GENERIC_FILENAMES = new Set([
+  "readme.md", "changelog.md", "contributing.md", "license.md",
+  "code_of_conduct.md", "security.md", "authors.md", "contributors.md",
+  "todo.md",
+  // Note: index.md intentionally excluded — ADR tools like adr-tools use */index.md as the ADR file
+]);
+
 // ─── Note Type Detection ─────────────────────────────────────────────────────
 
 function detectNoteType(filename: string, content: string): KnowledgeNoteType {
+  const base = filename.toLowerCase().split("/").pop() || "";
+
+  // Never mis-classify standard project files
+  if (GENERIC_FILENAMES.has(base)) return "general";
+
   const lower = filename.toLowerCase();
 
   // Filename-first signals
@@ -29,8 +42,9 @@ function detectNoteType(filename: string, content: string): KnowledgeNoteType {
   if (/\b(research|analysis|study|investigation|benchmark|comparison)\b/.test(lower)) return "research";
   if (/\b(session|log|journal|daily|weekly|standup)\b/.test(lower)) return "session";
 
-  // Content-based fallback
-  if (/##\s*decision|status:\s*(decided|accepted|rejected)/i.test(content)) return "decision";
+  // Content-based fallback — require explicit status field or decision section
+  if (/##\s*decision\b/i.test(content) && /##\s*(context|status|consequences)\b/i.test(content)) return "decision";
+  if (/^status:\s*(decided|accepted|rejected|proposed)/im.test(content)) return "decision";
   if (/attendees:|action items:|participants:/i.test(content)) return "meeting";
   if (/what went well|what could be better|stop doing|start doing|keep doing/i.test(content)) return "retro";
   if (/##\s*(overview|goals?|requirements?|user stories)/i.test(content)) return "spec";
@@ -89,6 +103,9 @@ function extractDecisions(content: string): string[] {
   }
 
   // Pattern-based extraction
+  // Phrases that look like decisions but are meta-commentary about ADR process, not actual decisions
+  const DECISION_NOISE = /^(reject|accept|propose|update|supersede|deprecate)\s+the\s+adr/i;
+
   const patterns = [
     /(?:we\s+)?decided?\s+to\s+([^.!?\n]{10,150})/gi,
     /going\s+with\s+([^.!?\n]{5,120})/gi,
@@ -101,7 +118,7 @@ function extractDecisions(content: string): string[] {
     let m: RegExpExecArray | null;
     while ((m = pattern.exec(content)) !== null) {
       const d = m[1].trim().replace(/[*_`]/g, "");
-      if (d.length >= 10 && d.length <= 160) decisions.push(d);
+      if (d.length >= 10 && d.length <= 160 && !DECISION_NOISE.test(d)) decisions.push(d);
     }
   }
 
@@ -120,7 +137,8 @@ function extractOpenQuestions(content: string): string[] {
       !t.startsWith("#") &&
       !t.startsWith(">") &&
       t.length >= 15 &&
-      t.length <= 160
+      t.length <= 160 &&
+      !/[^\x00-\x7F]/.test(t) // skip non-ASCII (non-English questions)
     ) {
       questions.push(t.replace(/^[-*]\s*/, ""));
     }
@@ -136,16 +154,41 @@ function extractOpenQuestions(content: string): string[] {
 
 // ─── People Extraction ────────────────────────────────────────────────────────
 
+// Common section/field labels that look like people names but aren't
+const PEOPLE_BLACKLIST = new Set([
+  "Decision Maker", "Decision Maker Name", "Decision Date", "Decision Title",
+  "Decision Number", "Decision Reach", "Technical Story", "Team Members",
+  "Team Members Present", "Key Points", "Action Items", "Next Steps",
+  "Open Issues", "Related Decisions", "Related Work", "Follow Up",
+  "Meeting Notes", "Meeting Date", "Meeting Time", "Attendees List",
+  "Status Update", "Risk Assessment", "Success Metrics", "User Story",
+  "Acceptance Criteria", "Definition Of", "Pull Request", "Issue Link",
+  "Evaluate Charts", "Participants List", "Stakeholders Involved",
+]);
+
 function extractPeople(content: string): string[] {
   const people = new Set<string>();
 
-  // @mentions
-  for (const m of content.matchAll(/@([a-zA-Z][\w-]+)/g)) people.add(m[1]);
+  // Common placeholder handles to skip
+  const HANDLE_BLACKLIST = new Set(["example", "username", "yourname", "user", "name", "email"]);
 
-  // "Name:" in meeting note format
-  for (const m of content.matchAll(/^([A-Z][a-z]+(?: [A-Z][a-z]+)+):/gm)) {
-    if (!["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].includes(m[1])) {
-      people.add(m[1]);
+  // @mentions — ASCII only, no hyphens (npm packages), no template placeholders
+  for (const m of content.matchAll(/@([a-zA-Z][a-zA-Z0-9_]{2,})/g)) {
+    const handle = m[1];
+    if (HANDLE_BLACKLIST.has(handle.toLowerCase())) continue;
+    if (handle.includes("-")) continue; // npm scoped packages
+    people.add(handle);
+  }
+
+  // "First Last:" at start of line — only scan meeting-like content to avoid ADR field labels
+  const isMeetingLike = /attendees:|participants:|meeting\b|standup|1on1/i.test(content);
+  if (isMeetingLike) {
+    for (const m of content.matchAll(/^([A-Za-z][a-z]+ [A-Z][a-z]+):/gm)) {
+      const name = m[1];
+      const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+      if (days.includes(name)) continue;
+      if (PEOPLE_BLACKLIST.has(name)) continue;
+      people.add(name);
     }
   }
 
@@ -179,10 +222,21 @@ function extractSummary(content: string, maxLen = 160): string {
   const withoutFm = content.replace(/^---[\s\S]*?---\r?\n/, "");
   for (const line of withoutFm.split("\n")) {
     let t = line.trim();
-    if (!t || t.startsWith("#") || t.startsWith("---") || t.startsWith("!") || t.length <= 20) continue;
-    // Strip leading list markers
-    t = t.replace(/^[-*>]\s+/, "");
-    if (t.length <= 10) continue;
+    if (!t || t.length <= 20) continue;
+    // Skip structural/non-prose lines
+    if (t.startsWith("#")) continue;
+    if (t.startsWith("---") || t.startsWith("===")) continue;
+    if (t.startsWith("!")) continue;       // images
+    if (t.startsWith("<")) continue;       // HTML tags
+    if (t.startsWith("http")) continue;    // bare URLs
+    if (t.startsWith("[!")) continue;      // callout blocks
+    if (/^\[.*\]\(.*\)$/.test(t)) continue; // bare markdown links
+    if (/^```/.test(t)) continue;          // code fences
+    if (/^\|/.test(t)) continue;           // tables
+    if (/^<!--/.test(t)) continue;         // HTML comments
+    // Strip leading list/blockquote markers
+    t = t.replace(/^[-*>]\s+/, "").replace(/^\d+\.\s+/, "");
+    if (t.length <= 15) continue;
     return t.length > maxLen ? t.slice(0, maxLen) + "…" : t;
   }
   return "";
@@ -234,9 +288,11 @@ export async function detectKnowledge(
     const people = extractPeople(content);
     const summary = extractSummary(content);
 
-    // Collect H2 themes across notes
+    // Collect H2 themes across notes — ASCII only to avoid non-English headers
     for (const m of content.matchAll(/^##\s+(.+)/gm)) {
-      const theme = m[1].trim().toLowerCase().replace(/[^a-z0-9 -]/g, "");
+      const raw = m[1].trim();
+      if (/[^\x00-\x7F]/.test(raw)) continue; // skip non-ASCII (other languages)
+      const theme = raw.toLowerCase().replace(/[^a-z0-9 -]/g, "").trim();
       if (theme.length >= 3 && theme.length <= 40) {
         themeMap.set(theme, (themeMap.get(theme) || 0) + 1);
       }
