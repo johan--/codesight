@@ -435,6 +435,17 @@ Runs as a Model Context Protocol server. Claude Code and Cursor call it directly
 }
 ```
 
+**OpenAI Codex CLI** (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.codesight]
+command = "npx"
+args = ["codesight", "--mcp"]
+startup_timeout_sec = 60
+```
+
+> **Codex timeout note:** `npx` has to resolve the package on first run which can exceed the default 30-second timeout. Set `startup_timeout_sec = 60` or install globally (`npm install -g codesight`) and use `command = "codesight"` instead — global installs start significantly faster.
+
 ![MCP Server: Claude Code/Cursor ↔ codesight MCP Server → 6 specialized tools + session cache](assets/mcp-server.jpg)
 
 | Tool | What it does |
