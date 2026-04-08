@@ -8,7 +8,7 @@ import { extractLaravelRoutes } from "../ast/extract-php.js";
 import { extractAspNetControllerRoutes, extractAspNetMinimalApiRoutes } from "../ast/extract-csharp.js";
 import { extractFlutterRoutes } from "../ast/extract-dart.js";
 import { extractVaporRoutes } from "../ast/extract-swift.js";
-import type { RouteInfo, Framework, ProjectInfo } from "../types.js";
+import type { RouteInfo, Framework, ProjectInfo, CodesightConfig } from "../types.js";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"];
 
@@ -35,7 +35,8 @@ function detectTags(content: string): string[] {
 
 export async function detectRoutes(
   files: string[],
-  project: ProjectInfo
+  project: ProjectInfo,
+  config?: CodesightConfig
 ): Promise<RouteInfo[]> {
   const routes: RouteInfo[] = [];
 
@@ -143,6 +144,41 @@ export async function detectRoutes(
     if (!seen.has(key)) {
       seen.add(key);
       deduped.push(route);
+    }
+  }
+
+  // Apply customRoutePatterns from config
+  if (config?.customRoutePatterns?.length) {
+    for (const file of files) {
+      const content = await readFileSafe(file);
+      if (!content) continue;
+      const rel = relative(process.cwd(), file);
+
+      for (const { pattern, method = "ALL" } of config.customRoutePatterns) {
+        let re: RegExp;
+        try {
+          re = new RegExp(pattern, "g");
+        } catch {
+          continue;
+        }
+
+        for (const match of content.matchAll(re)) {
+          // Try to extract a path from the first capture group, fallback to file path
+          const extractedPath = match[1] ?? `/${rel}`;
+          const routeKey = `${method}:${extractedPath}`;
+          if (!seen.has(routeKey)) {
+            seen.add(routeKey);
+            deduped.push({
+              method,
+              path: extractedPath,
+              file: rel,
+              tags: detectTags(content),
+              framework: project.frameworks[0] ?? "raw-http",
+              confidence: "regex",
+            });
+          }
+        }
+      }
     }
   }
 

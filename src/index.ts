@@ -106,7 +106,7 @@ async function scan(root: string, outputDirName: string, maxDepth: number, userC
 
   const [rawRoutes, schemas, components, libs, configResult, middleware, graph] =
     await Promise.all([
-      disabled.has("routes") ? Promise.resolve([]) : detectRoutes(files, project),
+      disabled.has("routes") ? Promise.resolve([]) : detectRoutes(files, project, userConfig),
       disabled.has("schema") ? Promise.resolve([]) : detectSchemas(files, project),
       disabled.has("components") ? Promise.resolve([]) : detectComponents(files, project),
       disabled.has("libs") ? Promise.resolve([]) : detectLibs(files, project),
