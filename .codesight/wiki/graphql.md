@@ -15,10 +15,6 @@ The Graphql subsystem handles **4 routes**.
 - `WS` `room:*` `[inferred]`
   `src/detectors/graphql.ts`
 
-## High-Impact Files
-
-- `src/detectors/graphql.ts` — imported by 2 files
-
 ## Source Files
 
 Read these before implementing or modifying this subsystem:

@@ -2,8 +2,8 @@
 
 > **Stack:** raw-http | none | unknown | typescript
 
-> 4 routes + 1 graphql + 3 ws | 0 models | 0 components | 34 lib files | 6 env vars | 5 middleware | 6 events | 60% test coverage
-> **Token savings:** this file is ~3,100 tokens. Without it, AI exploration would cost ~24,300 tokens. **Saves ~21,200 tokens per conversation.**
+> 4 routes + 1 graphql + 3 ws | 0 models | 0 components | 35 lib files | 6 env vars | 5 middleware | 6 events | 60% test coverage
+> **Token savings:** this file is ~3,200 tokens. Without it, AI exploration would cost ~24,600 tokens. **Saves ~21,400 tokens per conversation.**
 
 ---
 
@@ -29,6 +29,12 @@
 
 # Libraries
 
+- `src/ast/extract-android.ts`
+  - function extractRetrofitRoutes: (filePath, content, tags) => RouteInfo[]
+  - function extractRoomEntities: (_filePath, content) => SchemaModel[]
+  - function extractComposeComponents: (filePath, content) => ComponentInfo[]
+  - function extractNavigationRoutes: (filePath, content) => RouteInfo[]
+  - function extractActivitiesFromManifest: (filePath, content) => RouteInfo[]
 - `src/ast/extract-components.ts`
   - function extractReactComponentsAST: (ts, filePath, content, relPath) => ComponentInfo[]
   - function ComponentName: (...) => void
@@ -157,11 +163,12 @@
 
 ## Most Imported Files (change these carefully)
 
-- `src/types.ts` — imported by **36** files
+- `src/types.ts` — imported by **37** files
 - `src/scanner.ts` — imported by **15** files
 - `src/ast/loader.ts` — imported by **6** files
 - `src/ast/extract-dart.ts` — imported by **3** files
 - `src/ast/extract-swift.ts` — imported by **3** files
+- `src/ast/extract-android.ts` — imported by **3** files
 - `src/ast/extract-csharp.ts` — imported by **3** files
 - `src/ast/extract-php.ts` — imported by **3** files
 - `src/detectors/routes.ts` — imported by **3** files
@@ -176,20 +183,19 @@
 - `src/detectors/graph.ts` — imported by **2** files
 - `src/detectors/contracts.ts` — imported by **2** files
 - `src/detectors/tokens.ts` — imported by **2** files
-- `src/detectors/graphql.ts` — imported by **2** files
 
 ## Import Map (who imports what)
 
-- `src/types.ts` ← `src/ast/extract-components.ts`, `src/ast/extract-csharp.ts`, `src/ast/extract-dart.ts`, `src/ast/extract-go.ts`, `src/ast/extract-php.ts` +31 more
+- `src/types.ts` ← `src/ast/extract-android.ts`, `src/ast/extract-components.ts`, `src/ast/extract-csharp.ts`, `src/ast/extract-dart.ts`, `src/ast/extract-go.ts` +32 more
 - `src/scanner.ts` ← `src/detectors/components.ts`, `src/detectors/config.ts`, `src/detectors/contracts.ts`, `src/detectors/coverage.ts`, `src/detectors/events.ts` +10 more
 - `src/ast/loader.ts` ← `src/ast/extract-components.ts`, `src/ast/extract-routes.ts`, `src/ast/extract-schema.ts`, `src/detectors/components.ts`, `src/detectors/routes.ts` +1 more
 - `src/ast/extract-dart.ts` ← `src/detectors/components.ts`, `src/detectors/libs.ts`, `src/detectors/routes.ts`
 - `src/ast/extract-swift.ts` ← `src/detectors/components.ts`, `src/detectors/libs.ts`, `src/detectors/routes.ts`
+- `src/ast/extract-android.ts` ← `src/detectors/components.ts`, `src/detectors/routes.ts`, `src/detectors/schema.ts`
 - `src/ast/extract-csharp.ts` ← `src/detectors/libs.ts`, `src/detectors/routes.ts`, `src/detectors/schema.ts`
 - `src/ast/extract-php.ts` ← `src/detectors/libs.ts`, `src/detectors/routes.ts`, `src/detectors/schema.ts`
 - `src/detectors/routes.ts` ← `src/eval.ts`, `src/index.ts`, `src/mcp-server.ts`
 - `src/detectors/schema.ts` ← `src/eval.ts`, `src/index.ts`, `src/mcp-server.ts`
-- `src/detectors/components.ts` ← `src/eval.ts`, `src/index.ts`, `src/mcp-server.ts`
 
 ---
 

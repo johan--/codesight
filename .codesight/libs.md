@@ -1,5 +1,11 @@
 # Libraries
 
+- `src/ast/extract-android.ts`
+  - function extractRetrofitRoutes: (filePath, content, tags) => RouteInfo[]
+  - function extractRoomEntities: (_filePath, content) => SchemaModel[]
+  - function extractComposeComponents: (filePath, content) => ComponentInfo[]
+  - function extractNavigationRoutes: (filePath, content) => RouteInfo[]
+  - function extractActivitiesFromManifest: (filePath, content) => RouteInfo[]
 - `src/ast/extract-components.ts`
   - function extractReactComponentsAST: (ts, filePath, content, relPath) => ComponentInfo[]
   - function ComponentName: (...) => void
